@@ -1,0 +1,4 @@
+fpdf
+matplotlib
+streamlit
+pandas
