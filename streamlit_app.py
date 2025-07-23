@@ -33,11 +33,9 @@ tag_costs = {}
 tag_lengths = {}
 
 if uploaded_file:
-    # Herlaai as tekststring met UTF-8
     decoded = uploaded_file.read().decode("utf-8")
     file_stream = io.StringIO(decoded)
-    
-    # Maak seker kolomname is skoongemaak van whitespace of BOM
+
     reader = csv.DictReader(file_stream)
     reader.fieldnames = [field.strip() for field in reader.fieldnames]
 
@@ -46,7 +44,8 @@ if uploaded_file:
             length = int(row['Length'].strip())
             quantity = int(row['Qty'].strip())
             tag = row['Tag'].strip()
-            cost_per_meter = float(row['CostPerMeter'].strip())
+            cost_str = row['CostPerMeter'].strip().replace(",", ".")  # <-- Fix here
+            cost_per_meter = float(cost_str)
             
             raw_entries.append((length, quantity, tag))
             tag_costs[tag] = cost_per_meter
