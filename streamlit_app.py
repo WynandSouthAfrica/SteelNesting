@@ -33,22 +33,23 @@ tag_costs = {}
 tag_lengths = {}
 
 if uploaded_file:
-    csv_file = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
-    csv_reader = csv.DictReader(csv_file)
+    # Herlaai as tekststring met UTF-8
+    decoded = uploaded_file.read().decode("utf-8")
+    file_stream = io.StringIO(decoded)
+    
+    # Maak seker kolomname is skoongemaak van whitespace of BOM
+    reader = csv.DictReader(file_stream)
+    reader.fieldnames = [field.strip() for field in reader.fieldnames]
 
-    for row in csv_reader:
+    for row in reader:
         try:
-            length = int(float(row["Length"]))
-            quantity = int(row["Qty"])
-            tag = row["Tag"].strip()
-            cost_per_meter = float(row["CostPerMeter"])
-
-            if tag not in tag_costs:
-                tag_costs[tag] = cost_per_meter
-                tag_lengths[tag] = []
-
-            tag_lengths[tag].extend([length] * quantity)
-
+            length = int(row['Length'].strip())
+            quantity = int(row['Qty'].strip())
+            tag = row['Tag'].strip()
+            cost_per_meter = float(row['CostPerMeter'].strip())
+            
+            raw_entries.append((length, quantity, tag))
+            tag_costs[tag] = cost_per_meter
         except Exception as e:
             st.warning(f"Skipping row due to error: {e}")
 else:
