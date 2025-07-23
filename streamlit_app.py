@@ -1,13 +1,18 @@
-# Steel Nesting Program - Version 10.7
-# Adds: Prompt user to enter CSV file path manually (optional)
-
-import os
-import csv
-from collections import defaultdict
-from datetime import datetime
 from fpdf import FPDF
 import matplotlib.pyplot as plt
 import tempfile
+
+st.set_page_config(page_title="Steel Nesting Planner", layout="wide")
+st.title("Steel Nesting Planner v10.7")
+
+# Step 1: Enter Project Metadata
+st.header("Project Details")
+project_name = st.text_input("Project Name")
+project_location = st.text_input("Project Location")
+person_cutting = st.text_input("Person Cutting")
+material_type = st.text_input("Material Type")
+save_folder = st.text_input("Folder to save cutting lists (e.g., CuttingLists/ProjectA)", value="CuttingLists")
+today = datetime.today().strftime('%Y-%m-%d')
 
 STOCK_LENGTH = 6000  # mm
 KERF = 3             # mm
