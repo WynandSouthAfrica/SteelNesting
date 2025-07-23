@@ -28,9 +28,11 @@ today = datetime.today().strftime('%Y-%m-%d')
 st.header("📂 Upload or Enter Raw Length Data")
 uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
 
+import io
+import csv
+
 raw_entries = []
 tag_costs = {}
-tag_lengths = {}
 
 if uploaded_file:
     decoded = uploaded_file.read().decode("utf-8")
@@ -41,18 +43,24 @@ if uploaded_file:
 
     for row in reader:
         try:
-            length = int(row['Length'].strip())
-            quantity = int(row['Qty'].strip())
+            # Strip all values
+            length_str = row['Length'].strip()
+            qty_str = row['Qty'].strip()
             tag = row['Tag'].strip()
-            cost_str = row['CostPerMeter'].strip().replace(",", ".")  # <-- Fix here
+            cost_str = row['CostPerMeter'].strip().replace(",", ".")
+
+            # Convert types
+            length = int(length_str)
+            quantity = int(qty_str)
             cost_per_meter = float(cost_str)
-            
+
             raw_entries.append((length, quantity, tag))
             tag_costs[tag] = cost_per_meter
+
         except Exception as e:
             st.warning(f"Skipping row due to error: {e}")
 else:
-    st.info("Upload a CSV file with columns: `Length`, `Qty`, `Tag`, `CostPerMeter`.")
+    st.info("Upload a CSV file with rows in the format: `Length, Qty, Tag, CostPerMeter`.")
 
 # Nesting logic
 def nest_lengths(lengths, stock_length, kerf):
