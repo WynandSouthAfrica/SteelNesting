@@ -25,27 +25,34 @@ save_folder = st.text_input("Folder to save cutting lists (e.g., CuttingLists/Pr
 today = datetime.today().strftime('%Y-%m-%d')
 
 # Step 2: Upload CSV or input manually
-st.header("📥 Upload or Enter Raw Length Data")
-uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+import io
+import csv
 
 raw_entries = []
 tag_costs = {}
+tag_lengths = {}
 
 if uploaded_file:
-    csv_reader = csv.reader(uploaded_file.read().decode("utf-8").splitlines())
+    csv_file = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
+    csv_reader = csv.DictReader(csv_file)
+
     for row in csv_reader:
-        if len(row) >= 3:
-            try:
-                length = int(row[0])
-                quantity = int(row[1])
-                tag = row[2].strip()
-                cost_per_meter = float(row[3]) if len(row) >= 4 else 0.0
-                raw_entries.append((length, quantity, tag))
+        try:
+            length = int(float(row["Length"]))
+            quantity = int(row["Qty"])
+            tag = row["Tag"].strip()
+            cost_per_meter = float(row["CostPerMeter"])
+
+            if tag not in tag_costs:
                 tag_costs[tag] = cost_per_meter
-            except:
-                st.warning(f"Skipping row (invalid values): {row}")
+                tag_lengths[tag] = []
+
+            tag_lengths[tag].extend([length] * quantity)
+
+        except Exception as e:
+            st.warning(f"Skipping row due to error: {e}")
 else:
-    st.info("Upload a CSV file with rows in the format: `length, quantity, tag, cost_per_meter`.")
+    st.info("Upload a CSV file with columns: `Length`, `Qty`, `Tag`, `CostPerMeter`.")
 
 # Nesting logic
 def perform_nesting(entries, kerf):
