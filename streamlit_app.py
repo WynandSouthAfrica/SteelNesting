@@ -9,7 +9,7 @@ import zipfile
 
 # App config
 st.set_page_config(page_title="Steel Nesting Planner", layout="wide")
-st.title("Steel Nesting Planner v11.0")
+st.title("Steel Nesting Planner v11.1")
 
 # Constants
 KERF = 3  # mm
@@ -151,54 +151,4 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
             f.write(f"Cost per meter: R {cost_per_meter:.2f}\n")
             f.write(f"Total cost: R {total_cost:.2f}\n\n")
             for i, bar in enumerate(bars, 1):
-                used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
-                offcut = stock_length - used
-                f.write(f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm\n")
-        txt_paths.append(txt_file)
-
-    # Summary PDF
-    summary_pdf = FPDF()
-    summary_pdf.add_page()
-    summary_pdf.set_font("Courier", "B", 14)
-    summary_pdf.cell(0, 10, "PROJECT SUMMARY", ln=True, align="C")
-    summary_pdf.ln(5)
-    summary_pdf.set_font("Courier", size=11)
-    summary_pdf.multi_cell(0, 8, f"Project: {project_name}\nDrawing Number: {drawing_number}\nRevision: {revision_number}\nDate: {today}")
-    summary_pdf.ln(5)
-    summary_pdf.set_font("Courier", "B", 11)
-    summary_pdf.cell(50, 8, "Section Size")
-    summary_pdf.cell(30, 8, "Bars")
-    summary_pdf.cell(40, 8, "Total Meters")
-    summary_pdf.cell(40, 8, "Cost per m")
-    summary_pdf.cell(40, 8, "Total Cost")
-    summary_pdf.cell(30, 8, "Offcut")
-    summary_pdf.ln()
-    summary_pdf.set_font("Courier", size=11)
-    for tag, bars_used, total_m, rate, cost, offcut in summary_data:
-        summary_pdf.cell(50, 8, str(tag))
-        summary_pdf.cell(30, 8, str(bars_used))
-        summary_pdf.cell(40, 8, f"{total_m:.2f} m")
-        summary_pdf.cell(40, 8, f"R {rate:.2f}")
-        summary_pdf.cell(40, 8, f"R {cost:.2f}")
-        summary_pdf.cell(30, 8, f"{int(offcut)} mm")
-        summary_pdf.ln()
-    summary_path = os.path.join(save_folder, "Project_Summary.pdf")
-    summary_pdf.output(summary_path)
-    pdf_paths.append(summary_path)
-
-    # ZIP Export
-    zip_path = os.path.join(save_folder, f"{project_name.replace(' ', '_')}_cutting_lists.zip")
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        for file in pdf_paths + txt_paths:
-            zipf.write(file, arcname=os.path.basename(file))
-    with open(zip_path, "rb") as zip_file:
-        st.download_button("📦 Download All Cutting Lists (ZIP)", data=zip_file, file_name=os.path.basename(zip_path), mime="application/zip")
-
-# Final button
-if st.button("Run Nesting"):
-    if raw_entries:
-        export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder)
-        st.success("Nesting completed.")
-        st.success(f"Files saved to '{save_folder}'")
-    else:
-        st.warning("No valid data to nest.")
+                used = sum(bar) + KERF * (len(bar)-1*
