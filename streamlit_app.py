@@ -19,6 +19,8 @@ project_name = st.text_input("Project Name")
 project_location = st.text_input("Project Location")
 person_cutting = st.text_input("Person Cutting")
 material_type = st.text_input("Material Type")
+drawing_number = st.text_input("Drawing Number")
+revision_number = st.text_input("Revision Number")
 save_folder = st.text_input("Folder to save cutting lists (e.g., CuttingLists/ProjectA)", value="CuttingLists")
 today = datetime.today().strftime('%Y-%m-%d')
 
@@ -92,30 +94,27 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         filename_base = f"{tag.replace('/', '_').replace(' ', '_')}"
         file_base = os.path.join(save_folder, filename_base)
 
-        # Text file
-        txt_path = f"{file_base}.txt"
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write(f"Project: {project_name}\n")
-            f.write(f"Location: {project_location}\n")
-            f.write(f"Cut By: {person_cutting}\n")
-            f.write(f"Material: {material_type}\n")
-            f.write(f"Date: {today}\n\n")
-            f.write(f"Section: {tag}\n")
-            f.write(f"Bars required: {len(bars)}\n")
-            f.write(f"Total meters ordered: {round(total_length / 1000, 2)} m\n")
-            f.write(f"Cost per meter: R {cost_per_meter:.2f}\n")
-            f.write(f"Total cost: R {total_cost:.2f}\n\n")
-            for i, bar in enumerate(bars, 1):
-                used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
-                offcut = stock_length - used
-                f.write(f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm\n")
-
-        # PDF generation (no chart)
+        # PDF generation with logo and metadata
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
+
+        # Border
+        pdf.set_draw_color(0, 0, 0)
+        pdf.rect(5.0, 5.0, 200.0, 287.0)
+
+        # Logo (optional local path; update if deploying)
+        logo_path = "pg_bison_logo.png"
+        if os.path.exists(logo_path):
+            pdf.image(logo_path, x=10, y=8, w=30)
+            pdf.set_y(25)
+        else:
+            pdf.set_y(15)
+
         pdf.set_font("Helvetica", size=12)
         pdf.cell(200, 10, safe_pdf_text(f"Cutting List: {tag}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Drawing No.: {drawing_number}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Revision: {revision_number}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Project: {project_name}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Location: {project_location}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type}"), ln=True)
@@ -143,14 +142,6 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
                 data=pdf_file,
                 file_name=os.path.basename(pdf_path),
                 mime="application/pdf"
-            )
-
-        with open(txt_path, "rb") as txt_file:
-            st.download_button(
-                label=f"📃 Download TXT for {tag}",
-                data=txt_file,
-                file_name=os.path.basename(txt_path),
-                mime="text/plain"
             )
 
 # Run nesting
