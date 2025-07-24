@@ -116,8 +116,10 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         pdf.add_page()
         pdf.set_font("Helvetica", size=12)
         pdf.cell(200, 10, safe_pdf_text(f"Cutting List: {tag}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Project: {project_name} | Location: {project_location}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type} | Cut By: {person_cutting}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Project: {project_name}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Location: {project_location}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Cut By: {person_cutting}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Bars used: {len(bars)}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m | Cost: R {total_cost:.2f}"), ln=True)
 
