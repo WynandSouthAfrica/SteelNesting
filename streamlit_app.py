@@ -121,6 +121,7 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Cut By: {person_cutting}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Bars required: {len(bars)}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Stock length: {stock_length} mm"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Cost: R {total_cost:.2f}"), ln=True)
 
