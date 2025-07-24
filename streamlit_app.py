@@ -106,9 +106,9 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
 
         # PDF with visual bar chart
         pdf = FPDF()
-        pdf.set_doc_option("core_fonts_encoding", "utf-8")
+        pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
-        pdf.set_font("Arial", size=12)
+        pdf.set_font("Helvetica", size=12)
         pdf.cell(200, 10, f"Cutting List – {tag}", ln=True)
         pdf.cell(200, 10, f"Project: {project_name} | Location: {project_location}", ln=True)
         pdf.cell(200, 10, f"Material: {material_type} | Cut By: {person_cutting}", ln=True)
