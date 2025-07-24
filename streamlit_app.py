@@ -110,7 +110,7 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
             for i, bar in enumerate(bars, 1):
                 f.write(f"Bar {i}: {bar} => Total: {sum(bar)} mm\n")
 
-        # PDF with chart
+        # PDF with chart and bar list
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
@@ -120,6 +120,12 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type} | Cut By: {person_cutting}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Total cuts: {len(lengths)} | Bars: {len(bars)}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m | Cost: R {total_cost:.2f}"), ln=True)
+
+        pdf.ln(5)
+        pdf.set_font("Courier", size=10)
+        for i, bar in enumerate(bars, 1):
+            bar_text = f"Bar {i}: {bar} => Total: {sum(bar)} mm"
+            pdf.multi_cell(0, 8, safe_pdf_text(bar_text))
 
         # Draw chart
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
@@ -136,7 +142,7 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
             plt.tight_layout()
             plt.savefig(tmpfile.name)
             plt.close()
-            pdf.image(tmpfile.name, x=10, y=80, w=190)
+            pdf.image(tmpfile.name, x=10, y=pdf.get_y() + 5, w=190)
 
         pdf_path = f"{file_base}.pdf"
         pdf.output(pdf_path)
