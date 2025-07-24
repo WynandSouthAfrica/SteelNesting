@@ -74,6 +74,10 @@ def nest_lengths(lengths, stock_length, kerf):
             bars.append([length])
     return bars
 
+# Encoding helper for FPDF
+def safe_pdf_text(text):
+    return str(text).encode("latin-1", "replace").decode("latin-1")
+
 # PDF export with bar chart
 def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
     os.makedirs(save_folder, exist_ok=True)
@@ -109,11 +113,11 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
         pdf.set_font("Helvetica", size=12)
-        pdf.cell(200, 10, f"Cutting List – {tag}", ln=True)
-        pdf.cell(200, 10, f"Project: {project_name} | Location: {project_location}", ln=True)
-        pdf.cell(200, 10, f"Material: {material_type} | Cut By: {person_cutting}", ln=True)
-        pdf.cell(200, 10, f"Total cuts: {len(lengths)} | Bars: {len(bars)}", ln=True)
-        pdf.cell(200, 10, f"Total meters: {round(sum(lengths)/1000, 2)} m | Cost: R {total_cost:.2f}", ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Cutting List – {tag}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Project: {project_name} | Location: {project_location}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type} | Cut By: {person_cutting}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Total cuts: {len(lengths)} | Bars: {len(bars)}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Total meters: {round(sum(lengths)/1000, 2)} m | Cost: R {total_cost:.2f}"), ln=True)
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
             fig, ax = plt.subplots(figsize=(8, 4))
