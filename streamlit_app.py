@@ -4,12 +4,11 @@ import pandas as pd
 from datetime import datetime
 import streamlit as st
 from fpdf import FPDF
-import matplotlib.pyplot as plt
 import tempfile
 
 # App config
 st.set_page_config(page_title="Steel Nesting Planner", layout="wide")
-st.title("Steel Nesting Planner v10.7")
+st.title("Steel Nesting Planner v10.8")
 
 # Constants
 KERF = 3  # mm (fixed kerf for now)
@@ -102,15 +101,16 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
             f.write(f"Material: {material_type}\n")
             f.write(f"Date: {today}\n\n")
             f.write(f"Section: {tag}\n")
-            f.write(f"Total cuts: {len(lengths)}\n")
             f.write(f"Bars used: {len(bars)}\n")
             f.write(f"Total meters ordered: {round(total_length / 1000, 2)} m\n")
             f.write(f"Cost per meter: R {cost_per_meter:.2f}\n")
             f.write(f"Total cost: R {total_cost:.2f}\n\n")
             for i, bar in enumerate(bars, 1):
-                f.write(f"Bar {i}: {bar} => Total: {sum(bar)} mm\n")
+                used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
+                offcut = stock_length - used
+                f.write(f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm\n")
 
-        # PDF with chart and bar list
+        # PDF generation (no chart)
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
@@ -118,31 +118,16 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         pdf.cell(200, 10, safe_pdf_text(f"Cutting List – {tag}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Project: {project_name} | Location: {project_location}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type} | Cut By: {person_cutting}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Total cuts: {len(lengths)} | Bars: {len(bars)}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Bars used: {len(bars)}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m | Cost: R {total_cost:.2f}"), ln=True)
 
         pdf.ln(5)
         pdf.set_font("Courier", size=10)
         for i, bar in enumerate(bars, 1):
-            bar_text = f"Bar {i}: {bar} => Total: {sum(bar)} mm"
+            used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
+            offcut = stock_length - used
+            bar_text = f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm"
             pdf.multi_cell(0, 8, safe_pdf_text(bar_text))
-
-        # Draw chart
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-            fig, ax = plt.subplots(figsize=(8, 4))
-            for i, bar in enumerate(bars):
-                left = 0
-                for segment in bar:
-                    ax.barh(i, segment, left=left, height=0.5)
-                    left += segment + KERF
-            ax.set_xlim(0, stock_length)
-            ax.set_xlabel("mm")
-            ax.set_ylabel("Bar Number")
-            ax.set_title(f"Cut Layout for {tag}")
-            plt.tight_layout()
-            plt.savefig(tmpfile.name)
-            plt.close()
-            pdf.image(tmpfile.name, x=10, y=pdf.get_y() + 5, w=190)
 
         pdf_path = f"{file_base}.pdf"
         pdf.output(pdf_path)
