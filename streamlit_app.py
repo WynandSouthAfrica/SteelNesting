@@ -78,7 +78,7 @@ def nest_lengths(lengths, stock_length, kerf):
 def safe_pdf_text(text):
     return str(text).encode("latin-1", "replace").decode("latin-1")
 
-# PDF export with bar chart
+# PDF export with download buttons
 def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
     os.makedirs(save_folder, exist_ok=True)
     tag_lengths = {}
@@ -90,10 +90,12 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         total_length = sum(lengths)
         cost_per_meter = tag_costs.get(tag, 0.0)
         total_cost = (total_length / 1000) * cost_per_meter
-        file_base = os.path.join(save_folder, f"{tag.replace('/', '_')}")
+        filename_base = f"{tag.replace('/', '_').replace(' ', '_')}"
+        file_base = os.path.join(save_folder, filename_base)
 
         # Text file
-        with open(f"{file_base}.txt", "w", encoding="utf-8") as f:
+        txt_path = f"{file_base}.txt"
+        with open(txt_path, "w", encoding="utf-8") as f:
             f.write(f"Project: {project_name}\n")
             f.write(f"Location: {project_location}\n")
             f.write(f"Cut By: {person_cutting}\n")
@@ -102,13 +104,13 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
             f.write(f"Section: {tag}\n")
             f.write(f"Total cuts: {len(lengths)}\n")
             f.write(f"Bars used: {len(bars)}\n")
-            f.write(f"Total meters ordered: {round(sum(lengths)/1000, 2)} m\n")
+            f.write(f"Total meters ordered: {round(total_length / 1000, 2)} m\n")
             f.write(f"Cost per meter: R {cost_per_meter:.2f}\n")
             f.write(f"Total cost: R {total_cost:.2f}\n\n")
             for i, bar in enumerate(bars, 1):
                 f.write(f"Bar {i}: {bar} => Total: {sum(bar)} mm\n")
 
-        # PDF with visual bar chart
+        # PDF with chart
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
@@ -117,8 +119,9 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         pdf.cell(200, 10, safe_pdf_text(f"Project: {project_name} | Location: {project_location}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type} | Cut By: {person_cutting}"), ln=True)
         pdf.cell(200, 10, safe_pdf_text(f"Total cuts: {len(lengths)} | Bars: {len(bars)}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Total meters: {round(sum(lengths)/1000, 2)} m | Cost: R {total_cost:.2f}"), ln=True)
+        pdf.cell(200, 10, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m | Cost: R {total_cost:.2f}"), ln=True)
 
+        # Draw chart
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
             fig, ax = plt.subplots(figsize=(8, 4))
             for i, bar in enumerate(bars):
@@ -135,7 +138,25 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
             plt.close()
             pdf.image(tmpfile.name, x=10, y=80, w=190)
 
-        pdf.output(f"{file_base}.pdf")
+        pdf_path = f"{file_base}.pdf"
+        pdf.output(pdf_path)
+
+        # Download buttons
+        with open(pdf_path, "rb") as pdf_file:
+            st.download_button(
+                label=f"📄 Download PDF for {tag}",
+                data=pdf_file,
+                file_name=os.path.basename(pdf_path),
+                mime="application/pdf"
+            )
+
+        with open(txt_path, "rb") as txt_file:
+            st.download_button(
+                label=f"📃 Download TXT for {tag}",
+                data=txt_file,
+                file_name=os.path.basename(txt_path),
+                mime="text/plain"
+            )
 
 # Run nesting
 if st.button("Run Nesting"):
