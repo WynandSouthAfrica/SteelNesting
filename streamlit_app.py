@@ -5,6 +5,7 @@ from datetime import datetime
 import streamlit as st
 from fpdf import FPDF
 import tempfile
+import zipfile
 
 # App config
 st.set_page_config(page_title="Steel Nesting Planner", layout="wide")
@@ -57,98 +58,3 @@ if not input_df.empty:
             tag_costs[tag] = cost_per_meter
         except Exception as e:
             st.warning(f"Skipping row due to error: {e}")
-else:
-    st.info("Please enter at least one row of data in the table above.")
-
-# Nesting logic
-def nest_lengths(lengths, stock_length, kerf):
-    bars = []
-    for length in sorted(lengths, reverse=True):
-        placed = False
-        for bar in bars:
-            remaining = stock_length - sum(bar) - kerf * len(bar)
-            if length + kerf <= remaining:
-                bar.append(length)
-                placed = True
-                break
-        if not placed:
-            bars.append([length])
-    return bars
-
-# Encoding helper for FPDF
-def safe_pdf_text(text):
-    return str(text).encode("latin-1", "replace").decode("latin-1")
-
-# PDF export with download buttons
-def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
-    os.makedirs(save_folder, exist_ok=True)
-    tag_lengths = {}
-    for length, tag in raw_entries:
-        tag_lengths.setdefault(tag, []).append(length)
-
-    for tag, lengths in tag_lengths.items():
-        bars = nest_lengths(lengths, stock_length, KERF)
-        total_length = sum(lengths)
-        cost_per_meter = tag_costs.get(tag, 0.0)
-        total_cost = (total_length / 1000) * cost_per_meter
-        filename_base = f"{tag.replace('/', '_').replace(' ', '_')}"
-        file_base = os.path.join(save_folder, filename_base)
-
-        # PDF generation with logo and metadata
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-
-        # Border
-        pdf.set_draw_color(0, 0, 0)
-        pdf.rect(5.0, 5.0, 200.0, 287.0)
-
-        # Logo (optional local path; update if deploying)
-        logo_path = "pg_bison_logo.png"
-        if os.path.exists(logo_path):
-            pdf.image(logo_path, x=10, y=8, w=30)
-            pdf.set_y(25)
-        else:
-            pdf.set_y(15)
-
-        pdf.set_font("Helvetica", size=12)
-        pdf.cell(200, 10, safe_pdf_text(f"Cutting List: {tag}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Drawing No.: {drawing_number}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Revision: {revision_number}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Project: {project_name}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Location: {project_location}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Cut By: {person_cutting}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Bars required: {len(bars)}"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Stock length: {stock_length} mm"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m"), ln=True)
-        pdf.cell(200, 10, safe_pdf_text(f"Cost: R {total_cost:.2f}"), ln=True)
-
-        pdf.ln(5)
-        pdf.set_font("Courier", size=10)
-        for i, bar in enumerate(bars, 1):
-            used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
-            offcut = stock_length - used
-            bar_text = f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm"
-            pdf.multi_cell(0, 8, safe_pdf_text(bar_text))
-
-        pdf_path = f"{file_base}.pdf"
-        pdf.output(pdf_path)
-
-        # Download buttons
-        with open(pdf_path, "rb") as pdf_file:
-            st.download_button(
-                label=f"📄 Download PDF for {tag}",
-                data=pdf_file,
-                file_name=os.path.basename(pdf_path),
-                mime="application/pdf"
-            )
-
-# Run nesting
-if st.button("Run Nesting"):
-    if raw_entries:
-        export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder)
-        st.success("Nesting completed.")
-        st.success(f"Files saved to '{save_folder}'")
-    else:
-        st.warning("No valid data to nest.")
