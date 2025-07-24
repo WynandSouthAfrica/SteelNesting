@@ -24,44 +24,42 @@ material_type = st.text_input("Material Type")
 save_folder = st.text_input("Folder to save cutting lists (e.g., CuttingLists/ProjectA)", value="CuttingLists")
 today = datetime.today().strftime('%Y-%m-%d')
 
-# Step 2: Upload CSV or input manually
-st.header("📂 Upload or Enter Raw Length Data")
-uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+# Step 2: Enter Raw Length Data Manually
+st.header("📋 Cutting List Input")
 
-import io
-import csv
+# Input: Stock Length (default is 6000)
+stock_length = st.number_input("Enter Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=500)
+KERF = 3  # still fixed kerf for now
 
+# Editable table for manual input
+st.markdown("### ✍️ Enter or Edit Cutting Entries")
+default_data = [
+    {"Length": 550, "Qty": 3, "Tag": "50x50x6 Equal Angle", "CostPerMeter": 125.36},
+    {"Length": 650, "Qty": 8, "Tag": "50x50x6 Equal Angle", "CostPerMeter": 125.36},
+]
+input_df = st.data_editor(
+    pd.DataFrame(default_data),
+    num_rows="dynamic",
+    use_container_width=True,
+)
+
+# Validate and parse data
 raw_entries = []
 tag_costs = {}
-
-if uploaded_file:
-    decoded = uploaded_file.read().decode("utf-8")
-    file_stream = io.StringIO(decoded)
-
-    reader = csv.DictReader(file_stream)
-    reader.fieldnames = [field.strip() for field in reader.fieldnames]
-
-    for row in reader:
+if not input_df.empty:
+    for _, row in input_df.iterrows():
         try:
-            # Strip all values
-            length_str = row['Length'].strip()
-            qty_str = row['Qty'].strip()
-            tag = row['Tag'].strip()
-            cost_str = row['CostPerMeter'].strip().replace(",", ".")
-
-            # Convert types
-            length = int(length_str)
-            quantity = int(qty_str)
-            cost_per_meter = float(cost_str)
-
+            length = int(row["Length"])
+            quantity = int(row["Qty"])
+            tag = str(row["Tag"]).strip()
+            cost_per_meter = float(row["CostPerMeter"])
             raw_entries.append((length, quantity, tag))
             tag_costs[tag] = cost_per_meter
-
         except Exception as e:
             st.warning(f"Skipping row due to error: {e}")
 else:
-    st.info("Upload a CSV file with rows in the format: `Length, Qty, Tag, CostPerMeter`.")
-
+    st.info("Please enter at least one row of data in the table above.")
+    
 # Nesting logic
 def nest_lengths(lengths, stock_length, kerf):
     bars = []
