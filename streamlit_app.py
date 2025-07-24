@@ -9,7 +9,7 @@ import zipfile
 
 # App config
 st.set_page_config(page_title="Steel Nesting Planner", layout="wide")
-st.title("Steel Nesting Planner v10.8")
+st.title("Steel Nesting Planner v10.9")
 
 # Constants
 KERF = 3  # mm (fixed kerf for now)
@@ -110,20 +110,23 @@ if st.button("Run Nesting"):
                 else:
                     pdf.set_y(15)
 
-                pdf.set_font("Helvetica", size=12)
-                pdf.cell(200, 10, safe_pdf_text(f"Cutting List: {tag}"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Drawing No.: {drawing_number}"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Revision: {revision_number}"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Project: {project_name}"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Location: {project_location}"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Material: {material_type}"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Cut By: {person_cutting}"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Bars required: {len(bars)}"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Stock length: {stock_length} mm"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m"), ln=True)
-                pdf.cell(200, 10, safe_pdf_text(f"Cost: R {total_cost:.2f}"), ln=True)
+                pdf.set_font("Courier", size=11)
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Project: {project_name}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Location: {project_location}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Cut By: {person_cutting}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Material: {material_type}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Drawing Number: {drawing_number}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Revision: {revision_number}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Date: {today}"))
+                pdf.ln(3)
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Section Size: {tag}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Bars required: {len(bars)}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Stock length: {stock_length} mm"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Cost per meter: R {cost_per_meter:.2f}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Total cost: R {total_cost:.2f}"))
+                pdf.ln(3)
 
-                pdf.ln(5)
                 pdf.set_font("Courier", size=10)
                 for i, bar in enumerate(bars, 1):
                     used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
@@ -141,11 +144,13 @@ if st.button("Run Nesting"):
                     f.write(f"Location: {project_location}\n")
                     f.write(f"Cut By: {person_cutting}\n")
                     f.write(f"Material: {material_type}\n")
+                    f.write(f"Drawing Number: {drawing_number}\n")
+                    f.write(f"Revision: {revision_number}\n")
                     f.write(f"Date: {today}\n\n")
-                    f.write(f"Section: {tag}\n")
+                    f.write(f"Section Size: {tag}\n")
                     f.write(f"Bars required: {len(bars)}\n")
                     f.write(f"Stock length: {stock_length} mm\n")
-                    f.write(f"Total meters ordered: {round(total_length / 1000, 2)} m\n")
+                    f.write(f"Total meters: {round(total_length / 1000, 2)} m\n")
                     f.write(f"Cost per meter: R {cost_per_meter:.2f}\n")
                     f.write(f"Total cost: R {total_cost:.2f}\n\n")
                     for i, bar in enumerate(bars, 1):
