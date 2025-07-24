@@ -82,4 +82,132 @@ if st.button("Run Nesting"):
             return str(text).encode("latin-1", "replace").decode("latin-1")
 
         def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
-            os.makedirs(save_folder, exist_ok=Tru
+            os.makedirs(save_folder, exist_ok=True)
+            tag_lengths = {}
+            pdf_paths = []
+            txt_paths = []
+            summary_data = []
+
+            for length, tag in raw_entries:
+                tag_lengths.setdefault(tag, []).append(length)
+
+            for tag, lengths in tag_lengths.items():
+                bars = nest_lengths(lengths, stock_length, KERF)
+                total_length = sum(lengths)
+                cost_per_meter = tag_costs.get(tag, 0.0)
+                total_cost = (total_length / 1000) * cost_per_meter
+                total_offcut = sum(stock_length - (sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)) for bar in bars)
+                summary_data.append((tag, len(bars), total_length / 1000, cost_per_meter, total_cost, total_offcut))
+
+                filename_base = f"{tag.replace('/', '_').replace(' ', '_')}"
+                file_base = os.path.join(save_folder, filename_base)
+
+                pdf = FPDF()
+                pdf.set_auto_page_break(auto=True, margin=15)
+                pdf.add_page()
+                pdf.set_draw_color(0, 0, 0)
+                pdf.rect(5.0, 5.0, 200.0, 287.0)
+                logo_path = "pg_bison_logo.png"
+                if os.path.exists(logo_path):
+                    pdf.image(logo_path, x=10, y=8, w=30)
+                    pdf.set_y(25)
+                else:
+                    pdf.set_y(15)
+
+                pdf.set_font("Courier", size=11)
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Project: {project_name}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Location: {project_location}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Cut By: {person_cutting}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Material: {material_type}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Drawing Number: {drawing_number}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Revision: {revision_number}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Date: {today}"))
+                pdf.ln(3)
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Section Size: {tag}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Bars required: {len(bars)}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Stock length: {stock_length} mm"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Cost per meter: R {cost_per_meter:.2f}"))
+                pdf.multi_cell(0, 8, safe_pdf_text(f"Total cost: R {total_cost:.2f}"))
+                pdf.ln(3)
+
+                pdf.set_font("Courier", size=10)
+                for i, bar in enumerate(bars, 1):
+                    used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
+                    offcut = stock_length - used
+                    bar_text = f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm"
+                    pdf.multi_cell(0, 8, safe_pdf_text(bar_text))
+
+                pdf_path = f"{file_base}.pdf"
+                pdf.output(pdf_path)
+                pdf_paths.append(pdf_path)
+
+                txt_path = f"{file_base}.txt"
+                with open(txt_path, "w", encoding="utf-8") as f:
+                    f.write(f"Project: {project_name}\n")
+                    f.write(f"Location: {project_location}\n")
+                    f.write(f"Cut By: {person_cutting}\n")
+                    f.write(f"Material: {material_type}\n")
+                    f.write(f"Drawing Number: {drawing_number}\n")
+                    f.write(f"Revision: {revision_number}\n")
+                    f.write(f"Date: {today}\n\n")
+                    f.write(f"Section Size: {tag}\n")
+                    f.write(f"Bars required: {len(bars)}\n")
+                    f.write(f"Stock length: {stock_length} mm\n")
+                    f.write(f"Total meters: {round(total_length / 1000, 2)} m\n")
+                    f.write(f"Cost per meter: R {cost_per_meter:.2f}\n")
+                    f.write(f"Total cost: R {total_cost:.2f}\n\n")
+                    for i, bar in enumerate(bars, 1):
+                        used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
+                        offcut = stock_length - used
+                        f.write(f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm\n")
+                txt_paths.append(txt_path)
+
+            # Generate summary PDF
+            summary_pdf_path = os.path.join(save_folder, "Project_Summary.pdf")
+            summary_pdf = FPDF()
+            summary_pdf.add_page()
+            summary_pdf.set_font("Courier", "B", 14)
+            summary_pdf.cell(0, 10, "PROJECT SUMMARY", ln=True, align="C")
+            summary_pdf.ln(5)
+            summary_pdf.set_font("Courier", size=11)
+            summary_pdf.multi_cell(0, 8, f"Project: {project_name}\nDrawing Number: {drawing_number}\nRevision: {revision_number}\nDate: {today}")
+            summary_pdf.ln(5)
+            summary_pdf.set_font("Courier", "B", 11)
+            summary_pdf.cell(50, 8, "Section Size")
+            summary_pdf.cell(30, 8, "Bars")
+            summary_pdf.cell(40, 8, "Total Meters")
+            summary_pdf.cell(40, 8, "Cost per m")
+            summary_pdf.cell(40, 8, "Total Cost")
+            summary_pdf.cell(30, 8, "Offcut")
+            summary_pdf.ln()
+            summary_pdf.set_font("Courier", size=11)
+            for tag, bars_used, total_m, rate, cost, offcut in summary_data:
+                summary_pdf.cell(50, 8, str(tag))
+                summary_pdf.cell(30, 8, str(bars_used))
+                summary_pdf.cell(40, 8, f"{total_m:.2f} m")
+                summary_pdf.cell(40, 8, f"R {rate:.2f}")
+                summary_pdf.cell(40, 8, f"R {cost:.2f}")
+                summary_pdf.cell(30, 8, f"{int(offcut)} mm")
+                summary_pdf.ln()
+            summary_pdf.output(summary_pdf_path)
+            pdf_paths.append(summary_pdf_path)
+
+            zip_path = os.path.join(save_folder, f"{project_name.replace(' ', '_')}_cutting_lists.zip")
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                for file in pdf_paths + txt_paths:
+                    zipf.write(file, arcname=os.path.basename(file))
+
+            with open(zip_path, "rb") as zip_file:
+                st.download_button(
+                    label="📦 Download All Cutting Lists (ZIP)",
+                    data=zip_file,
+                    file_name=os.path.basename(zip_path),
+                    mime="application/zip"
+                )
+
+        export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder)
+        st.success("Nesting completed.")
+        st.success(f"Files saved to '{save_folder}'")
+    else:
+        st.warning("No valid data to nest.")
