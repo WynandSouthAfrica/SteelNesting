@@ -9,7 +9,7 @@ import zipfile
 
 # App config
 st.set_page_config(page_title="Steel Nesting Planner", layout="wide")
-st.title("Steel Nesting Planner v11.1")
+st.title("Steel Nesting Planner v11.2")
 
 # Constants
 KERF = 3  # mm
@@ -75,8 +75,11 @@ def nest_lengths(lengths, stock_length, kerf):
             bars.append([length])
     return bars
 
-def safe_pdf_text(text):
-    return str(text).encode("latin-1", "replace").decode("latin-1")
+def write_label_and_value(pdf, label, value, font_size=11):
+    pdf.set_font("Courier", style="", size=font_size)
+    pdf.cell(40, 8, f"{label}:", ln=0)
+    pdf.set_font("Courier", style="B", size=font_size)
+    pdf.cell(0, 8, f"{value}", ln=1)
 
 # Cutting list export
 def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
@@ -105,7 +108,6 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         pdf.add_page()
         pdf.set_draw_color(0, 0, 0)
         pdf.rect(5.0, 5.0, 200.0, 287.0)
-        pdf.set_font("Courier", size=11)
 
         for label, value in [
             ("Project", project_name), ("Location", project_location), ("Cut By", person_cutting),
@@ -113,23 +115,22 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
             ("Material", material_type), ("Drawing Number", drawing_number),
             ("Revision", revision_number), ("Date", today)
         ]:
-            pdf.multi_cell(0, 8, safe_pdf_text(f"{label}: {value}"))
+            write_label_and_value(pdf, label, value)
 
         pdf.ln(3)
-        pdf.multi_cell(0, 8, safe_pdf_text(f"Section Size: {tag}"))
-        pdf.multi_cell(0, 8, safe_pdf_text(f"Bars required: {len(bars)}"))
-        pdf.multi_cell(0, 8, safe_pdf_text(f"Stock length: {stock_length} mm"))
-        pdf.multi_cell(0, 8, safe_pdf_text(f"Total meters: {round(total_length / 1000, 2)} m"))
-        pdf.multi_cell(0, 8, safe_pdf_text(f"Cost per meter: R {cost_per_meter:.2f}"))
-        pdf.multi_cell(0, 8, safe_pdf_text(f"Total cost: R {total_cost:.2f}"))
+        write_label_and_value(pdf, "Section Size", tag)
+        write_label_and_value(pdf, "Bars required", len(bars))
+        write_label_and_value(pdf, "Stock length", f"{stock_length} mm")
+        write_label_and_value(pdf, "Total meters", f"{round(total_length / 1000, 2)} m")
+        write_label_and_value(pdf, "Cost per meter", f"R {cost_per_meter:.2f}")
+        write_label_and_value(pdf, "Total cost", f"R {total_cost:.2f}")
         pdf.ln(3)
 
         pdf.set_font("Courier", size=10)
         for i, bar in enumerate(bars, 1):
             used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
             offcut = stock_length - used
-            bar_text = f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm"
-            pdf.multi_cell(0, 8, safe_pdf_text(bar_text))
+            pdf.multi_cell(0, 8, f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm")
 
         pdf_file = f"{file_base}.pdf"
         pdf.output(pdf_file)
@@ -168,7 +169,10 @@ def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
         ("Project", project_name), ("Supplier", supplier_name), ("Order Number", order_number),
         ("Drawing Number", drawing_number), ("Revision", revision_number), ("Date", today)
     ]:
-        summary_pdf.multi_cell(0, 8, f"{label}: {value}")
+        summary_pdf.set_font("Courier", style="", size=11)
+        summary_pdf.cell(40, 8, f"{label}:", ln=0)
+        summary_pdf.set_font("Courier", style="B", size=11)
+        summary_pdf.cell(0, 8, f"{value}", ln=1)
     summary_pdf.ln(5)
 
     summary_pdf.set_font("Courier", "B", 11)
