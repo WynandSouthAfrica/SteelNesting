@@ -1,190 +1,216 @@
 import os
+import csv
 import pandas as pd
-import streamlit as st
 from datetime import datetime
+import streamlit as st
 from fpdf import FPDF
-import matplotlib.pyplot as plt
 import tempfile
 import zipfile
 
-# --- CONFIG ---
-st.set_page_config(page_title="Steel Nesting Planner v11.3", layout="wide")
-st.title("Steel Nesting Planner v11.3")
+# App config
+st.set_page_config(page_title="Steel Nesting Planner", layout="wide")
+st.title("Steel Nesting Planner v11.2")
 
-KERF = 3  # mm kerf between cuts
+# Constants
+KERF = 3  # mm
 
-# --- PROJECT METADATA ---
-st.header("📋 Project Details")
-project_name = st.text_input("Project Name", "")
-project_location = st.text_input("Project Location", "")
-person_cutting = st.text_input("Person Cutting", "")
-order_number = st.text_input("Order Number", "")
-supplier = st.text_input("Supplier", "")
+# Step 1: Project Metadata
+st.header("🔧 Project Details")
+project_name = st.text_input("Project Name")
+project_location = st.text_input("Project Location")
+person_cutting = st.text_input("Person Cutting")
+supplier_name = st.text_input("Supplier")
+order_number = st.text_input("Order Number")
+material_type = st.text_input("Material Type")
+drawing_number = st.text_input("Drawing Number")
+revision_number = st.text_input("Revision Number")
+save_folder = st.text_input("Folder to save cutting lists", value="CuttingLists")
+today = datetime.today().strftime('%Y-%m-%d')
 
-# --- CUT LIST INPUT ---
-st.header("✂️ Cut List")
-cut_df = st.data_editor(
-    pd.DataFrame(columns=["Length", "Quantity", "Section", "Cost_per_Meter"]),
+# Step 2: Cutting List Input
+st.header("📋 Cutting List Input")
+stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=500)
+
+st.markdown("### ✍️ Enter or Edit Cutting Entries")
+default_data = [
+    {"Length": 550, "Qty": 3, "Tag": "50x50x6 Equal Angle", "CostPerMeter": 125.36},
+    {"Length": 650, "Qty": 8, "Tag": "50x50x6 Equal Angle", "CostPerMeter": 125.36},
+]
+input_df = st.data_editor(
+    pd.DataFrame(default_data),
     num_rows="dynamic",
     use_container_width=True,
-    key="cutlist"
 )
 
-# --- STOCK AVAILABLE INPUT ---
-st.header("🏗️ Available Stock")
-stock_df = st.data_editor(
-    pd.DataFrame(columns=["Stock_Length", "Quantity"]),
-    num_rows="dynamic",
-    use_container_width=True,
-    key="stock"
-)
+# Parse input
+raw_entries = []
+tag_costs = {}
+if not input_df.empty:
+    for _, row in input_df.iterrows():
+        try:
+            length = int(row["Length"])
+            quantity = int(row["Qty"])
+            tag = str(row["Tag"]).strip()
+            cost_per_meter = float(row["CostPerMeter"])
+            for _ in range(quantity):
+                raw_entries.append((length, tag))
+            tag_costs[tag] = cost_per_meter
+        except Exception as e:
+            st.warning(f"Skipping row due to error: {e}")
+else:
+    st.info("Please enter at least one row of data.")
 
-# --- HELPER FUNCTION: Try to fit cuts into stock ---
-def simulate_nesting(cut_df, stock_df):
-    nesting_result = []
-    remaining_cuts = []
-
-    # Expand all cuts
-    all_cuts = []
-    for _, row in cut_df.iterrows():
-        for _ in range(int(row["Quantity"])):
-            all_cuts.append({
-                "Length": int(row["Length"]),
-                "Section": row["Section"],
-                "Cost_per_Meter": float(row["Cost_per_Meter"])
-            })
-
-    # Sort cuts longest to shortest
-    all_cuts.sort(key=lambda x: -x["Length"])
-
-    # Expand stock bars
-    stock_bars = []
-    for _, row in stock_df.iterrows():
-        for _ in range(int(row["Quantity"])):
-            stock_bars.append({
-                "Length": int(row["Stock_Length"]),
-                "Remaining": int(row["Stock_Length"]),
-                "Cuts": []
-            })
-
-    # Try nest each cut
-    for cut in all_cuts:
+# Nesting logic
+def nest_lengths(lengths, stock_length, kerf):
+    bars = []
+    for length in sorted(lengths, reverse=True):
         placed = False
-        for bar in stock_bars:
-            if cut["Length"] + KERF <= bar["Remaining"]:
-                bar["Cuts"].append(cut)
-                bar["Remaining"] -= (cut["Length"] + KERF)
+        for bar in bars:
+            remaining = stock_length - sum(bar) - kerf * len(bar)
+            if length + kerf <= remaining:
+                bar.append(length)
                 placed = True
                 break
         if not placed:
-            remaining_cuts.append(cut)
+            bars.append([length])
+    return bars
 
-    return stock_bars, remaining_cuts
+def write_label_and_value(pdf, label, value, font_size=11):
+    pdf.set_font("Courier", style="", size=font_size)
+    pdf.cell(40, 8, f"{label}:", ln=0)
+    pdf.set_font("Courier", style="B", size=font_size)
+    pdf.cell(0, 8, f"{value}", ln=1)
 
-# --- NESTING LOGIC ---
-if st.button("🔁 Run Nesting"):
-    if cut_df.empty or stock_df.empty:
-        st.warning("Please enter both a cut list and available stock.")
-    else:
-        bars_used, cuts_remaining = simulate_nesting(cut_df, stock_df)
+# Cutting list export
+def export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder):
+    os.makedirs(save_folder, exist_ok=True)
+    tag_lengths = {}
+    pdf_paths = []
+    txt_paths = []
+    summary_data = []
 
-        # Display results
-        st.success("Nesting completed.")
-        st.header("📦 Nesting Summary")
+    for length, tag in raw_entries:
+        tag_lengths.setdefault(tag, []).append(length)
 
-        total_cost = 0.0
-        for i, bar in enumerate(bars_used):
-            if bar["Cuts"]:
-                st.subheader(f"Bar {i+1} – {bar['Length']}mm")
-                cuts_data = pd.DataFrame(bar["Cuts"])
-                st.dataframe(cuts_data, use_container_width=True)
-                used_length = sum(c["Length"] + KERF for c in bar["Cuts"])
-                cost = sum(c["Length"] * c["Cost_per_Meter"] / 1000 for c in bar["Cuts"])
-                total_cost += cost
+    for tag, lengths in tag_lengths.items():
+        bars = nest_lengths(lengths, stock_length, KERF)
+        total_length = sum(lengths)
+        cost_per_meter = tag_costs.get(tag, 0.0)
+        total_cost = (total_length / 1000) * cost_per_meter
+        total_offcut = sum(stock_length - (sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)) for bar in bars)
+        summary_data.append((tag, len(bars), total_length / 1000, cost_per_meter, total_cost, total_offcut))
 
-                fig, ax = plt.subplots(figsize=(6, 0.4))
-                current = 0
-                for cut in bar["Cuts"]:
-                    ax.barh(0, cut["Length"], left=current, edgecolor='black')
-                    current += cut["Length"] + KERF
-                ax.set_xlim(0, bar["Length"])
-                ax.axis('off')
-                st.pyplot(fig)
+        file_base = os.path.join(save_folder, tag.replace('/', '_').replace(' ', '_'))
 
-        if cuts_remaining:
-            st.warning(f"⚠️ {len(cuts_remaining)} cuts could not be nested due to lack of stock.")
-            st.dataframe(pd.DataFrame(cuts_remaining), use_container_width=True)
-
-        st.markdown(f"💰 **Estimated Total Cost:** R {total_cost:,.2f}")
-
-        # --- EXPORT TO PDF & TXT ---
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # PDF
         pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
-        pdf.set_font("Arial", "B", 16)
-        pdf.cell(0, 10, f"Nesting Report – {project_name}", ln=True)
-        pdf.set_font("Arial", "", 12)
-        pdf.cell(0, 10, f"Location: {project_location} | Cut By: {person_cutting}", ln=True)
-        pdf.cell(0, 10, f"Order: {order_number} | Supplier: {supplier}", ln=True)
-        pdf.ln()
+        pdf.set_draw_color(0, 0, 0)
+        pdf.rect(5.0, 5.0, 200.0, 287.0)
 
-        for i, bar in enumerate(bars_used):
-            if bar["Cuts"]:
-                pdf.set_font("Arial", "B", 12)
-                pdf.cell(0, 10, f"Bar {i+1} – {bar['Length']}mm", ln=True)
-                pdf.set_font("Arial", "", 10)
-                for cut in bar["Cuts"]:
-                    pdf.cell(0, 10, f" - {cut['Length']}mm [{cut['Section']}] @ R{cut['Cost_per_Meter']}/m", ln=True)
-                pdf.ln()
+        for label, value in [
+            ("Project", project_name), ("Location", project_location), ("Cut By", person_cutting),
+            ("Supplier", supplier_name), ("Order Number", order_number),
+            ("Material", material_type), ("Drawing Number", drawing_number),
+            ("Revision", revision_number), ("Date", today)
+        ]:
+            write_label_and_value(pdf, label, value)
 
-        if cuts_remaining:
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 10, "⚠️ Unfulfilled Cuts", ln=True)
-            pdf.set_font("Arial", "", 10)
-            for cut in cuts_remaining:
-                pdf.cell(0, 10, f" - {cut['Length']}mm [{cut['Section']}]", ln=True)
+        pdf.ln(3)
+        write_label_and_value(pdf, "Section Size", tag)
+        write_label_and_value(pdf, "Bars required", len(bars))
+        write_label_and_value(pdf, "Stock length", f"{stock_length} mm")
+        write_label_and_value(pdf, "Total meters", f"{round(total_length / 1000, 2)} m")
+        write_label_and_value(pdf, "Cost per meter", f"R {cost_per_meter:.2f}")
+        write_label_and_value(pdf, "Total cost", f"R {total_cost:.2f}")
+        pdf.ln(3)
 
-        pdf.ln()
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 10, f"Total Estimated Cost: R {total_cost:,.2f}", ln=True)
+        pdf.set_font("Courier", size=10)
+        for i, bar in enumerate(bars, 1):
+            used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
+            offcut = stock_length - used
+            pdf.multi_cell(0, 8, f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm")
 
-        # Save to temp files
-        with tempfile.TemporaryDirectory() as tmpdirname:
-            pdf_path = os.path.join(tmpdirname, f"nesting_report_{timestamp}.pdf")
-            txt_path = os.path.join(tmpdirname, f"nesting_summary_{timestamp}.txt")
-            zip_path = os.path.join(tmpdirname, f"nesting_output_{timestamp}.zip")
+        pdf_file = f"{file_base}.pdf"
+        pdf.output(pdf_file)
+        pdf_paths.append(pdf_file)
 
-            pdf.output(pdf_path)
+        # TXT
+        txt_file = f"{file_base}.txt"
+        with open(txt_file, "w", encoding="utf-8") as f:
+            for label, value in [
+                ("Project", project_name), ("Location", project_location), ("Cut By", person_cutting),
+                ("Supplier", supplier_name), ("Order Number", order_number),
+                ("Material", material_type), ("Drawing Number", drawing_number),
+                ("Revision", revision_number), ("Date", today)
+            ]:
+                f.write(f"{label}: {value}\n")
+            f.write(f"\nSection Size: {tag}\nBars required: {len(bars)}\n")
+            f.write(f"Stock length: {stock_length} mm\n")
+            f.write(f"Total meters: {round(total_length / 1000, 2)} m\n")
+            f.write(f"Cost per meter: R {cost_per_meter:.2f}\n")
+            f.write(f"Total cost: R {total_cost:.2f}\n\n")
+            for i, bar in enumerate(bars, 1):
+                used = sum(bar) + KERF * (len(bar)-1 if len(bar)>0 else 0)
+                offcut = stock_length - used
+                f.write(f"Bar {i}: {bar} => Total: {sum(bar)} mm | Offcut: {offcut} mm\n")
+        txt_paths.append(txt_file)
 
-            # Write TXT summary
-            with open(txt_path, "w") as txt:
-                txt.write(f"Nesting Summary – {project_name}\n")
-                txt.write(f"Location: {project_location}\n")
-                txt.write(f"Person Cutting: {person_cutting}\n")
-                txt.write(f"Order Number: {order_number}\n")
-                txt.write(f"Supplier: {supplier}\n\n")
-                for i, bar in enumerate(bars_used):
-                    if bar["Cuts"]:
-                        txt.write(f"Bar {i+1} – {bar['Length']}mm:\n")
-                        for cut in bar["Cuts"]:
-                            txt.write(f" - {cut['Length']}mm [{cut['Section']}] @ R{cut['Cost_per_Meter']}/m\n")
-                        txt.write("\n")
-                if cuts_remaining:
-                    txt.write("Unfulfilled Cuts:\n")
-                    for cut in cuts_remaining:
-                        txt.write(f" - {cut['Length']}mm [{cut['Section']}]\n")
-                txt.write(f"\nTotal Cost: R {total_cost:,.2f}\n")
+    # Summary PDF
+    summary_pdf = FPDF()
+    summary_pdf.add_page()
+    summary_pdf.set_font("Courier", "B", 14)
+    summary_pdf.cell(0, 10, "PROJECT SUMMARY", ln=True, align="C")
+    summary_pdf.ln(5)
 
-            # Zip it
-            with zipfile.ZipFile(zip_path, 'w') as zipf:
-                zipf.write(pdf_path, os.path.basename(pdf_path))
-                zipf.write(txt_path, os.path.basename(txt_path))
+    summary_pdf.set_font("Courier", size=11)
+    for label, value in [
+        ("Project", project_name), ("Supplier", supplier_name), ("Order Number", order_number),
+        ("Drawing Number", drawing_number), ("Revision", revision_number), ("Date", today)
+    ]:
+        summary_pdf.set_font("Courier", style="", size=11)
+        summary_pdf.cell(40, 8, f"{label}:", ln=0)
+        summary_pdf.set_font("Courier", style="B", size=11)
+        summary_pdf.cell(0, 8, f"{value}", ln=1)
+    summary_pdf.ln(5)
 
-            # Streamlit download
-            with open(zip_path, "rb") as f:
-                st.download_button(
-                    label="⬇️ Download ZIP (PDF + TXT)",
-                    data=f,
-                    file_name=f"nesting_output_{timestamp}.zip",
-                    mime="application/zip"
-                )
+    summary_pdf.set_font("Courier", "B", 11)
+    summary_pdf.cell(50, 8, "Section Size")
+    summary_pdf.cell(30, 8, "Bars")
+    summary_pdf.cell(40, 8, "Total Meters")
+    summary_pdf.cell(40, 8, "Cost per m")
+    summary_pdf.cell(40, 8, "Total Cost")
+    summary_pdf.cell(30, 8, "Offcut")
+    summary_pdf.ln()
+
+    summary_pdf.set_font("Courier", size=11)
+    for tag, bars_used, total_m, rate, cost, offcut in summary_data:
+        summary_pdf.cell(50, 8, str(tag))
+        summary_pdf.cell(30, 8, str(bars_used))
+        summary_pdf.cell(40, 8, f"{total_m:.2f} m")
+        summary_pdf.cell(40, 8, f"R {rate:.2f}")
+        summary_pdf.cell(40, 8, f"R {cost:.2f}")
+        summary_pdf.cell(30, 8, f"{int(offcut)} mm")
+        summary_pdf.ln()
+
+    summary_path = os.path.join(save_folder, "Project_Summary.pdf")
+    summary_pdf.output(summary_path)
+    pdf_paths.append(summary_path)
+
+    # ZIP
+    zip_path = os.path.join(save_folder, f"{project_name.replace(' ', '_')}_cutting_lists.zip")
+    with zipfile.ZipFile(zip_path, 'w') as zipf:
+        for file in pdf_paths + txt_paths:
+            zipf.write(file, arcname=os.path.basename(file))
+    with open(zip_path, "rb") as zip_file:
+        st.download_button("📦 Download All Cutting Lists (ZIP)", data=zip_file, file_name=os.path.basename(zip_path), mime="application/zip")
+
+# Final run button
+if st.button("Run Nesting"):
+    if raw_entries:
+        export_cutting_lists(raw_entries, tag_costs, stock_length, save_folder)
+        st.success("Nesting completed.")
+        st.success(f"Files saved to '{save_folder}'")
+    else:
+        st.warning("No valid data to nest.")
