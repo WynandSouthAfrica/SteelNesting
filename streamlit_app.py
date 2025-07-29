@@ -71,7 +71,7 @@ if mode == "🔁 Nest by Required Cuts":
             offcut = stock_length - used
             st.text(f"Bar {i}: {bar} => Total: {used} mm | Offcut: {offcut} mm")
 
-        st.markdown(f"💰 Total Estimated Cost: R {total_cost:,.2f}")
+        st.markdown(f"💰 Total Estimated Cost: R {total_cost_Excl_VAT:,.2f}")
         st.markdown(f"📏 Total Offcut: {int(total_offcut)} mm")
 
 # -----------------------------------------
