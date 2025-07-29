@@ -26,7 +26,7 @@ mode = st.radio("Select Nesting Mode:", [
 if mode == "🔁 Nest by Required Cuts":
     st.header("🔁 Nest by Required Cuts (Estimate Stock Needed)")
 
-    stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=100)
+    stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=50)
 
     section_tag = st.text_input("Section / Tag", "50x50x6 EA")
     cost_per_meter = st.number_input("Cost per Meter", min_value=0.0, value=125.0)
