@@ -5,34 +5,31 @@ from datetime import datetime
 import tempfile
 import zipfile
 
-# App setup
+# App config
 st.set_page_config(page_title="Steel Nesting Planner v12.0.1", layout="wide")
 st.title("🔩 Steel Nesting Planner v12.0.1 – Work From Stock")
 
-KERF = 3  # mm kerf
+KERF = 3  # mm
 
 # --- Inputs ---
 st.header("📋 Cutting List Input")
 
-col_stock1, col_stock2 = st.columns([2, 1])
-with col_stock1:
+col1, col2 = st.columns([2, 1])
+with col1:
     stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=100)
-with col_stock2:
+with col2:
     stock_qty = st.number_input("Stock Quantity", min_value=1, value=4)
 
-col1, col2 = st.columns(2)
-with col1:
-    section_tag = st.text_input("Section / Tag", "150x150x10 FB")
-    cut_length = st.number_input("Cut Length (mm)", min_value=10, max_value=stock_length, value=550)
-with col2:
-    cut_qty = st.number_input("Quantity Required", min_value=1, value=10)
-    cost_per_meter = st.number_input("Cost Per Meter (optional)", min_value=0.0, value=0.0, step=1.0)
+section_tag = st.text_input("Section / Tag", "150x150x10 FB")
+cut_length = st.number_input("Cut Length (mm)", min_value=10, max_value=stock_length, value=550)
+cut_qty = st.number_input("Quantity Required", min_value=1, value=10)
+cost_per_meter = st.number_input("Cost Per Meter (optional)", min_value=0.0, value=0.0, step=1.0)
 
 project_name = st.text_input("Project Name", "")
 person_cutting = st.text_input("Person Cutting", "")
 today = datetime.today().strftime('%Y-%m-%d')
 
-# --- Cutting logic ---
+# --- Nesting Logic ---
 def simulate_forward_nesting(stock_length, stock_qty, cut_length, cut_qty, kerf):
     bars = [{"cuts": [], "remaining": stock_length} for _ in range(stock_qty)]
     cuts_placed = 0
@@ -53,7 +50,7 @@ def simulate_forward_nesting(stock_length, stock_qty, cut_length, cut_qty, kerf)
     cuts_remaining = cut_qty - cuts_placed
     return bars, cuts_placed, cuts_remaining
 
-# --- Display results ---
+# --- Run Nesting ---
 if st.button("🧠 Simulate Nesting"):
     bars_used, cuts_done, cuts_short = simulate_forward_nesting(stock_length, stock_qty, cut_length, cut_qty, KERF)
 
@@ -70,7 +67,7 @@ if st.button("🧠 Simulate Nesting"):
     total_cost = total_meters * cost_per_meter
     st.markdown(f"💰 **Total Cost (est.):** R {total_cost:,.2f}")
 
-    # --- Export Files ---
+    # --- PDF + TXT Export ---
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Courier", "B", 14)
@@ -93,16 +90,10 @@ if st.button("🧠 Simulate Nesting"):
             bar_str = ", ".join(str(c) for c in bar["cuts"])
             pdf.multi_cell(0, 8, f"Bar {i}: [{bar_str}] => Total: {total_cut} mm | Offcut: {offcut} mm")
 
-    # TXT file
     txt_output = f"Steel Nesting Report – {today}\n"
-    txt_output += f"Project: {project_name}\n"
-    txt_output += f"Section: {section_tag}\n"
-    txt_output += f"Person Cutting: {person_cutting}\n"
-    txt_output += f"Stock: {stock_qty} × {stock_length} mm\n"
-    txt_output += f"Required Cuts: {cut_qty} × {cut_length} mm\n"
-    txt_output += f"Cost per meter: R {cost_per_meter:.2f}\n"
-    txt_output += f"Total cost: R {total_cost:.2f}\n\n"
-
+    txt_output += f"Project: {project_name}\nSection: {section_tag}\nPerson Cutting: {person_cutting}\n"
+    txt_output += f"Stock: {stock_qty} × {stock_length} mm\nRequired Cuts: {cut_qty} × {cut_length} mm\n"
+    txt_output += f"Cost per meter: R {cost_per_meter:.2f}\nTotal cost: R {total_cost:.2f}\n\n"
     for i, bar in enumerate(bars_used, 1):
         if bar["cuts"]:
             total_cut = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
@@ -110,7 +101,6 @@ if st.button("🧠 Simulate Nesting"):
             bar_str = ", ".join(str(c) for c in bar["cuts"])
             txt_output += f"Bar {i}: [{bar_str}] => Total: {total_cut} mm | Offcut: {offcut} mm\n"
 
-    # --- Save all files to temp ZIP ---
     with tempfile.TemporaryDirectory() as tmpdir:
         pdf_path = os.path.join(tmpdir, "Nesting_Report.pdf")
         txt_path = os.path.join(tmpdir, "Nesting_Report.txt")
