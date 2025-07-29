@@ -7,13 +7,34 @@ import tempfile
 import zipfile
 
 # App setup
-st.set_page_config(page_title="Steel Nesting Planner v13.1", layout="wide")
-st.title("🧰 Steel Nesting Planner v13.1 – Multi-Mode App")
+st.set_page_config(page_title="Steel Nesting Planner v13.2", layout="wide")
+st.title("🧰 Steel Nesting Planner v13.2 – Multi-Mode with Metadata")
 
-KERF = 2  # mm
+KERF = 3  # mm
 today = datetime.today().strftime('%Y-%m-%d')
 
-# --- MODE SELECTOR ---
+# -----------------------------------------
+# 🧾 Project Metadata Section (Always visible)
+# -----------------------------------------
+st.header("📁 Project Details")
+
+colA1, colA2 = st.columns(2)
+with colA1:
+    project_name = st.text_input("Project Name", "PG Bison Extraction Ducts")
+    project_location = st.text_input("Project Location", "Ugie")
+    person_cutting = st.text_input("Person Cutting", "Wynand")
+    supplier_name = st.text_input("Supplier", "Macsteel")
+with colA2:
+    order_number = st.text_input("Order Number", "PO-2024-145")
+    drawing_number = st.text_input("Drawing Number", "1450-002-04")
+    revision_number = st.text_input("Revision Number", "01")
+    material_type = st.text_input("Material Type", "150x150x10 FB")
+
+st.divider()
+
+# -----------------------------------------
+# MODE SELECTOR
+# -----------------------------------------
 mode = st.radio("Select Nesting Mode:", [
     "🔁 Nest by Required Cuts",
     "📦 Nest From Stock",
@@ -26,12 +47,12 @@ mode = st.radio("Select Nesting Mode:", [
 if mode == "🔁 Nest by Required Cuts":
     st.header("🔁 Nest by Required Cuts (Estimate Stock Needed)")
 
-    stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=50)
-
-    section_tag = st.text_input("Section / Tag", "50x50x6 EA")
+    stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=100)
     cost_per_meter = st.number_input("Cost per Meter", min_value=0.0, value=125.0)
 
-    # ✅ FIXED HERE: Ensure DataFrame
+    section_tag = material_type  # Use material type as tag
+
+    # Ensure DataFrame
     cut_data = pd.DataFrame(st.data_editor(
         [{"Length": 550, "Qty": 4}, {"Length": 750, "Qty": 2}],
         num_rows="dynamic",
@@ -86,13 +107,9 @@ elif mode == "📦 Nest From Stock":
     with col2:
         stock_qty = st.number_input("Stock Quantity", min_value=1, value=4)
 
-    section_tag = st.text_input("Section / Tag", "150x150x10 FB")
     cut_length = st.number_input("Cut Length (mm)", min_value=10, max_value=stock_length, value=550)
     cut_qty = st.number_input("Quantity Required", min_value=1, value=10)
     cost_per_meter = st.number_input("Cost Per Meter (optional)", min_value=0.0, value=0.0, step=1.0)
-
-    project_name = st.text_input("Project Name", "")
-    person_cutting = st.text_input("Person Cutting", "")
 
     def simulate_nesting(stock_length, stock_qty, cut_length, cut_qty, kerf):
         bars = [{"cuts": [], "remaining": stock_length} for _ in range(stock_qty)]
@@ -133,9 +150,13 @@ elif mode == "📦 Nest From Stock":
         pdf.add_page()
         pdf.set_font("Courier", "", 11)
         pdf.cell(0, 10, f"Nesting Report – {today}", ln=True)
-        pdf.cell(0, 10, f"Project: {project_name}", ln=True)
-        pdf.cell(0, 10, f"Section: {section_tag}", ln=True)
-        pdf.cell(0, 10, f"Cutting: {person_cutting}", ln=True)
+        for label, value in [
+            ("Project", project_name), ("Location", project_location), ("Cutting", person_cutting),
+            ("Supplier", supplier_name), ("Order Number", order_number),
+            ("Drawing", drawing_number), ("Revision", revision_number), ("Material", material_type)
+        ]:
+            pdf.cell(0, 10, f"{label}: {value}", ln=True)
+
         pdf.cell(0, 10, f"Stock: {stock_qty} × {stock_length} mm", ln=True)
         pdf.cell(0, 10, f"Required: {cut_qty} × {cut_length} mm", ln=True)
         pdf.cell(0, 10, f"Cost per meter: R {cost_per_meter:.2f}", ln=True)
@@ -149,8 +170,14 @@ elif mode == "📦 Nest From Stock":
                 pdf.multi_cell(0, 8, f"Bar {i}: [{bar_str}] => Total: {total} mm | Offcut: {offcut} mm")
 
         txt = f"Nesting Report – {today}\n"
-        txt += f"Project: {project_name}\nSection: {section_tag}\nPerson Cutting: {person_cutting}\n"
-        txt += f"Stock: {stock_qty} × {stock_length} mm\nRequired Cuts: {cut_qty} × {cut_length} mm\n"
+        for label, value in [
+            ("Project", project_name), ("Location", project_location), ("Person Cutting", person_cutting),
+            ("Supplier", supplier_name), ("Order Number", order_number),
+            ("Drawing Number", drawing_number), ("Revision", revision_number), ("Material", material_type)
+        ]:
+            txt += f"{label}: {value}\n"
+
+        txt += f"\nStock: {stock_qty} × {stock_length} mm\nRequired Cuts: {cut_qty} × {cut_length} mm\n"
         txt += f"Cost per meter: R {cost_per_meter:.2f}\nTotal cost: R {total_cost:.2f}\n\n"
         for i, bar in enumerate(bars_used, 1):
             if bar["cuts"]:
