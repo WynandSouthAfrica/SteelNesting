@@ -1,13 +1,14 @@
 import os
 import streamlit as st
+import pandas as pd
 from fpdf import FPDF
 from datetime import datetime
 import tempfile
 import zipfile
 
-# Setup
-st.set_page_config(page_title="Steel Nesting Planner v13.0", layout="wide")
-st.title("🧰 Steel Nesting Planner v13.0 – Multi-Mode App")
+# App setup
+st.set_page_config(page_title="Steel Nesting Planner v13.1", layout="wide")
+st.title("🧰 Steel Nesting Planner v13.1 – Multi-Mode App")
 
 KERF = 3  # mm
 today = datetime.today().strftime('%Y-%m-%d')
@@ -29,15 +30,20 @@ if mode == "🔁 Nest by Required Cuts":
 
     section_tag = st.text_input("Section / Tag", "50x50x6 EA")
     cost_per_meter = st.number_input("Cost per Meter", min_value=0.0, value=125.0)
-    cut_data = st.data_editor(
+
+    # ✅ FIXED HERE: Ensure DataFrame
+    cut_data = pd.DataFrame(st.data_editor(
         [{"Length": 550, "Qty": 4}, {"Length": 750, "Qty": 2}],
         num_rows="dynamic",
         use_container_width=True
-    )
+    ))
 
     lengths = []
     for _, row in cut_data.iterrows():
-        lengths += [int(row["Length"])] * int(row["Qty"])
+        try:
+            lengths += [int(row["Length"])] * int(row["Qty"])
+        except:
+            pass
 
     def nest_lengths(lengths, stock_length, kerf):
         bars = []
@@ -144,7 +150,7 @@ elif mode == "📦 Nest From Stock":
 
         txt = f"Nesting Report – {today}\n"
         txt += f"Project: {project_name}\nSection: {section_tag}\nPerson Cutting: {person_cutting}\n"
-        txt += f"Stock: {stock_qty} × {stock_length} mm\nRequired: {cut_qty} × {cut_length} mm\n"
+        txt += f"Stock: {stock_qty} × {stock_length} mm\nRequired Cuts: {cut_qty} × {cut_length} mm\n"
         txt += f"Cost per meter: R {cost_per_meter:.2f}\nTotal cost: R {total_cost:.2f}\n\n"
         for i, bar in enumerate(bars_used, 1):
             if bar["cuts"]:
