@@ -5,114 +5,169 @@ from datetime import datetime
 import tempfile
 import zipfile
 
-# App config
-st.set_page_config(page_title="Steel Nesting Planner v12.0.1", layout="wide")
-st.title("🔩 Steel Nesting Planner v12.0.1 – Work From Stock")
+# Setup
+st.set_page_config(page_title="Steel Nesting Planner v13.0", layout="wide")
+st.title("🧰 Steel Nesting Planner v13.0 – Multi-Mode App")
 
 KERF = 3  # mm
-
-# --- Inputs ---
-st.header("📋 Cutting List Input")
-
-col1, col2 = st.columns([2, 1])
-with col1:
-    stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=100)
-with col2:
-    stock_qty = st.number_input("Stock Quantity", min_value=1, value=4)
-
-section_tag = st.text_input("Section / Tag", "150x150x10 FB")
-cut_length = st.number_input("Cut Length (mm)", min_value=10, max_value=stock_length, value=550)
-cut_qty = st.number_input("Quantity Required", min_value=1, value=10)
-cost_per_meter = st.number_input("Cost Per Meter (optional)", min_value=0.0, value=0.0, step=1.0)
-
-project_name = st.text_input("Project Name", "")
-person_cutting = st.text_input("Person Cutting", "")
 today = datetime.today().strftime('%Y-%m-%d')
 
-# --- Nesting Logic ---
-def simulate_forward_nesting(stock_length, stock_qty, cut_length, cut_qty, kerf):
-    bars = [{"cuts": [], "remaining": stock_length} for _ in range(stock_qty)]
-    cuts_placed = 0
+# --- MODE SELECTOR ---
+mode = st.radio("Select Nesting Mode:", [
+    "🔁 Nest by Required Cuts",
+    "📦 Nest From Stock",
+    "📊 View Summary Report"
+])
 
-    for _ in range(cut_qty):
-        placed = False
-        for bar in bars:
-            required = cut_length + (kerf if bar["cuts"] else 0)
-            if bar["remaining"] >= required:
-                bar["cuts"].append(cut_length)
-                bar["remaining"] -= required
-                cuts_placed += 1
-                placed = True
+# -----------------------------------------
+# MODE 1: NEST BY REQUIRED CUTS (v11 logic)
+# -----------------------------------------
+if mode == "🔁 Nest by Required Cuts":
+    st.header("🔁 Nest by Required Cuts (Estimate Stock Needed)")
+
+    stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=100)
+
+    section_tag = st.text_input("Section / Tag", "50x50x6 EA")
+    cost_per_meter = st.number_input("Cost per Meter", min_value=0.0, value=125.0)
+    cut_data = st.data_editor(
+        [{"Length": 550, "Qty": 4}, {"Length": 750, "Qty": 2}],
+        num_rows="dynamic",
+        use_container_width=True
+    )
+
+    lengths = []
+    for _, row in cut_data.iterrows():
+        lengths += [int(row["Length"])] * int(row["Qty"])
+
+    def nest_lengths(lengths, stock_length, kerf):
+        bars = []
+        for length in sorted(lengths, reverse=True):
+            placed = False
+            for bar in bars:
+                remaining = stock_length - sum(bar) - kerf * len(bar)
+                if length + kerf <= remaining:
+                    bar.append(length)
+                    placed = True
+                    break
+            if not placed:
+                bars.append([length])
+        return bars
+
+    if st.button("Run Nesting"):
+        bars = nest_lengths(lengths, stock_length, KERF)
+        total_cut = sum(lengths)
+        total_cost = (total_cut / 1000) * cost_per_meter
+        total_offcut = sum(stock_length - (sum(bar) + KERF * (len(bar)-1 if len(bar) > 0 else 0)) for bar in bars)
+
+        st.success(f"Bars Required: {len(bars)}")
+        for i, bar in enumerate(bars, 1):
+            used = sum(bar) + KERF * (len(bar) - 1)
+            offcut = stock_length - used
+            st.text(f"Bar {i}: {bar} => Total: {used} mm | Offcut: {offcut} mm")
+
+        st.markdown(f"💰 Total Estimated Cost: R {total_cost:,.2f}")
+        st.markdown(f"📏 Total Offcut: {int(total_offcut)} mm")
+
+# -----------------------------------------
+# MODE 2: NEST FROM STOCK (v12 logic)
+# -----------------------------------------
+elif mode == "📦 Nest From Stock":
+    st.header("📦 Nest From Available Stock")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=100)
+    with col2:
+        stock_qty = st.number_input("Stock Quantity", min_value=1, value=4)
+
+    section_tag = st.text_input("Section / Tag", "150x150x10 FB")
+    cut_length = st.number_input("Cut Length (mm)", min_value=10, max_value=stock_length, value=550)
+    cut_qty = st.number_input("Quantity Required", min_value=1, value=10)
+    cost_per_meter = st.number_input("Cost Per Meter (optional)", min_value=0.0, value=0.0, step=1.0)
+
+    project_name = st.text_input("Project Name", "")
+    person_cutting = st.text_input("Person Cutting", "")
+
+    def simulate_nesting(stock_length, stock_qty, cut_length, cut_qty, kerf):
+        bars = [{"cuts": [], "remaining": stock_length} for _ in range(stock_qty)]
+        cuts_placed = 0
+        for _ in range(cut_qty):
+            placed = False
+            for bar in bars:
+                required = cut_length + (kerf if bar["cuts"] else 0)
+                if bar["remaining"] >= required:
+                    bar["cuts"].append(cut_length)
+                    bar["remaining"] -= required
+                    cuts_placed += 1
+                    placed = True
+                    break
+            if not placed:
                 break
-        if not placed:
-            break
+        cuts_remaining = cut_qty - cuts_placed
+        return bars, cuts_placed, cuts_remaining
 
-    cuts_remaining = cut_qty - cuts_placed
-    return bars, cuts_placed, cuts_remaining
+    if st.button("🧠 Simulate Nesting"):
+        bars_used, cuts_done, cuts_short = simulate_nesting(stock_length, stock_qty, cut_length, cut_qty, KERF)
+        st.header("📦 Nesting Results")
+        for i, bar in enumerate(bars_used, 1):
+            if bar["cuts"]:
+                total = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
+                offcut = stock_length - total
+                st.text(f"Bar {i}: {bar['cuts']} => Total: {total} mm | Offcut: {offcut} mm")
 
-# --- Run Nesting ---
-if st.button("🧠 Simulate Nesting"):
-    bars_used, cuts_done, cuts_short = simulate_forward_nesting(stock_length, stock_qty, cut_length, cut_qty, KERF)
+        total_m = (cuts_done * cut_length) / 1000
+        total_cost = total_m * cost_per_meter
 
-    st.header("📦 Nesting Results")
-    for i, bar in enumerate(bars_used, 1):
-        if bar["cuts"]:
-            total_cut = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
-            offcut = stock_length - total_cut
-            st.text(f"Bar {i}: {bar['cuts']} => Total: {total_cut} mm | Offcut: {offcut} mm")
+        st.markdown(f"✅ **Cuts Completed:** {cuts_done}")
+        st.markdown(f"❌ **Cuts Remaining:** {cuts_short}")
+        st.markdown(f"💰 **Total Cost:** R {total_cost:,.2f}")
 
-    st.markdown(f"✅ **Total Pieces Cut:** {cuts_done}")
-    st.markdown(f"❌ **Remaining to Cut:** {cuts_short}")
-    total_meters = (cuts_done * cut_length) / 1000
-    total_cost = total_meters * cost_per_meter
-    st.markdown(f"💰 **Total Cost (est.):** R {total_cost:,.2f}")
+        # Export ZIP
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Courier", "", 11)
+        pdf.cell(0, 10, f"Nesting Report – {today}", ln=True)
+        pdf.cell(0, 10, f"Project: {project_name}", ln=True)
+        pdf.cell(0, 10, f"Section: {section_tag}", ln=True)
+        pdf.cell(0, 10, f"Cutting: {person_cutting}", ln=True)
+        pdf.cell(0, 10, f"Stock: {stock_qty} × {stock_length} mm", ln=True)
+        pdf.cell(0, 10, f"Required: {cut_qty} × {cut_length} mm", ln=True)
+        pdf.cell(0, 10, f"Cost per meter: R {cost_per_meter:.2f}", ln=True)
+        pdf.cell(0, 10, f"Total cost: R {total_cost:.2f}", ln=True)
+        pdf.ln(5)
+        for i, bar in enumerate(bars_used, 1):
+            if bar["cuts"]:
+                total = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
+                offcut = stock_length - total
+                bar_str = ", ".join(str(c) for c in bar["cuts"])
+                pdf.multi_cell(0, 8, f"Bar {i}: [{bar_str}] => Total: {total} mm | Offcut: {offcut} mm")
 
-    # --- PDF + TXT Export ---
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Courier", "B", 14)
-    pdf.cell(0, 10, "Steel Nesting Report", ln=True)
-    pdf.set_font("Courier", "", 11)
-    pdf.cell(0, 10, f"Project: {project_name}", ln=True)
-    pdf.cell(0, 10, f"Section: {section_tag}", ln=True)
-    pdf.cell(0, 10, f"Person Cutting: {person_cutting}", ln=True)
-    pdf.cell(0, 10, f"Date: {today}", ln=True)
-    pdf.cell(0, 10, f"Stock: {stock_qty} × {stock_length} mm bars", ln=True)
-    pdf.cell(0, 10, f"Required: {cut_qty} × {cut_length} mm cuts", ln=True)
-    pdf.cell(0, 10, f"Cost per meter: R {cost_per_meter:.2f}", ln=True)
-    pdf.cell(0, 10, f"Total cost: R {total_cost:,.2f}", ln=True)
-    pdf.ln(5)
+        txt = f"Nesting Report – {today}\n"
+        txt += f"Project: {project_name}\nSection: {section_tag}\nPerson Cutting: {person_cutting}\n"
+        txt += f"Stock: {stock_qty} × {stock_length} mm\nRequired: {cut_qty} × {cut_length} mm\n"
+        txt += f"Cost per meter: R {cost_per_meter:.2f}\nTotal cost: R {total_cost:.2f}\n\n"
+        for i, bar in enumerate(bars_used, 1):
+            if bar["cuts"]:
+                total = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
+                offcut = stock_length - total
+                bar_str = ", ".join(str(c) for c in bar["cuts"])
+                txt += f"Bar {i}: [{bar_str}] => Total: {total} mm | Offcut: {offcut} mm\n"
 
-    for i, bar in enumerate(bars_used, 1):
-        if bar["cuts"]:
-            total_cut = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
-            offcut = stock_length - total_cut
-            bar_str = ", ".join(str(c) for c in bar["cuts"])
-            pdf.multi_cell(0, 8, f"Bar {i}: [{bar_str}] => Total: {total_cut} mm | Offcut: {offcut} mm")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = os.path.join(tmpdir, "Report.pdf")
+            txt_path = os.path.join(tmpdir, "Report.txt")
+            zip_path = os.path.join(tmpdir, "Nest_Export.zip")
+            pdf.output(pdf_path)
+            with open(txt_path, "w") as f: f.write(txt)
+            with zipfile.ZipFile(zip_path, "w") as zipf:
+                zipf.write(pdf_path, "Report.pdf")
+                zipf.write(txt_path, "Report.txt")
+            with open(zip_path, "rb") as zf:
+                st.download_button("📦 Download ZIP", data=zf.read(), file_name="Nest_Export.zip", mime="application/zip")
 
-    txt_output = f"Steel Nesting Report – {today}\n"
-    txt_output += f"Project: {project_name}\nSection: {section_tag}\nPerson Cutting: {person_cutting}\n"
-    txt_output += f"Stock: {stock_qty} × {stock_length} mm\nRequired Cuts: {cut_qty} × {cut_length} mm\n"
-    txt_output += f"Cost per meter: R {cost_per_meter:.2f}\nTotal cost: R {total_cost:.2f}\n\n"
-    for i, bar in enumerate(bars_used, 1):
-        if bar["cuts"]:
-            total_cut = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
-            offcut = stock_length - total_cut
-            bar_str = ", ".join(str(c) for c in bar["cuts"])
-            txt_output += f"Bar {i}: [{bar_str}] => Total: {total_cut} mm | Offcut: {offcut} mm\n"
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pdf_path = os.path.join(tmpdir, "Nesting_Report.pdf")
-        txt_path = os.path.join(tmpdir, "Nesting_Report.txt")
-        zip_path = os.path.join(tmpdir, "Nesting_Output.zip")
-
-        pdf.output(pdf_path)
-        with open(txt_path, "w") as f:
-            f.write(txt_output)
-
-        with zipfile.ZipFile(zip_path, "w") as zipf:
-            zipf.write(pdf_path, os.path.basename(pdf_path))
-            zipf.write(txt_path, os.path.basename(txt_path))
-
-        with open(zip_path, "rb") as zf:
-            st.download_button("📦 Download ZIP (PDF + TXT)", data=zf.read(), file_name="Nesting_Output.zip", mime="application/zip")
+# -----------------------------------------
+# MODE 3: VIEW REPORTS (Placeholder)
+# -----------------------------------------
+elif mode == "📊 View Summary Report":
+    st.header("📊 View Summary Report (Coming Soon)")
+    st.info("This section will let you upload or browse past reports.")
