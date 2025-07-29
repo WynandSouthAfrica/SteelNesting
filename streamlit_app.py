@@ -10,7 +10,7 @@ import zipfile
 st.set_page_config(page_title="Steel Nesting Planner v13.1", layout="wide")
 st.title("🧰 Steel Nesting Planner v13.1 – Multi-Mode App")
 
-KERF = 3  # mm
+KERF = 2  # mm
 today = datetime.today().strftime('%Y-%m-%d')
 
 # --- MODE SELECTOR ---
