@@ -42,17 +42,15 @@ mode = st.radio("Select Nesting Mode:", [
 ])
 
 # -----------------------------------------
-# MODE 1: NEST BY REQUIRED CUTS (v11 logic)
+# MODE 1: NEST BY REQUIRED CUTS
 # -----------------------------------------
 if mode == "🔁 Nest by Required Cuts":
     st.header("🔁 Nest by Required Cuts (Estimate Stock Needed)")
 
     stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=100)
     cost_per_meter = st.number_input("Cost per Meter", min_value=0.0, value=125.0)
+    section_tag = material_type
 
-    section_tag = material_type  # Use material type as tag
-
-    # Ensure DataFrame
     cut_data = pd.DataFrame(st.data_editor(
         [{"Length": 550, "Qty": 4}, {"Length": 750, "Qty": 2}],
         num_rows="dynamic",
@@ -96,7 +94,7 @@ if mode == "🔁 Nest by Required Cuts":
         st.markdown(f"📏 Total Offcut: {int(total_offcut)} mm")
 
 # -----------------------------------------
-# MODE 2: NEST FROM STOCK (v12 logic)
+# MODE 2: NEST FROM STOCK
 # -----------------------------------------
 elif mode == "📦 Nest From Stock":
     st.header("📦 Nest From Available Stock")
@@ -108,29 +106,23 @@ elif mode == "📦 Nest From Stock":
         stock_qty = st.number_input("Stock Quantity", min_value=1, value=4)
 
     cut_length = st.number_input("Cut Length (mm)", min_value=10, max_value=stock_length, value=550)
-    cut_qty = st.number_input("Quantity Required", min_value=1, value=10)
     cost_per_meter = st.number_input("Cost Per Meter (optional)", min_value=0.0, value=0.0, step=1.0)
 
-    def simulate_nesting(stock_length, stock_qty, cut_length, cut_qty, kerf):
+    def simulate_nesting(stock_length, stock_qty, cut_length, kerf):
         bars = [{"cuts": [], "remaining": stock_length} for _ in range(stock_qty)]
-        cuts_placed = 0
-        for _ in range(cut_qty):
-            placed = False
-            for bar in bars:
+        for bar in bars:
+            while True:
                 required = cut_length + (kerf if bar["cuts"] else 0)
                 if bar["remaining"] >= required:
                     bar["cuts"].append(cut_length)
                     bar["remaining"] -= required
-                    cuts_placed += 1
-                    placed = True
+                else:
                     break
-            if not placed:
-                break
-        cuts_remaining = cut_qty - cuts_placed
-        return bars, cuts_placed, cuts_remaining
+        total_cuts = sum(len(bar["cuts"]) for bar in bars)
+        return bars, total_cuts
 
     if st.button("🧠 Simulate Nesting"):
-        bars_used, cuts_done, cuts_short = simulate_nesting(stock_length, stock_qty, cut_length, cut_qty, KERF)
+        bars_used, total_cuts = simulate_nesting(stock_length, stock_qty, cut_length, KERF)
         st.header("📦 Nesting Results")
         for i, bar in enumerate(bars_used, 1):
             if bar["cuts"]:
@@ -138,11 +130,10 @@ elif mode == "📦 Nest From Stock":
                 offcut = stock_length - total
                 st.text(f"Bar {i}: {bar['cuts']} => Total: {total} mm | Offcut: {offcut} mm")
 
-        total_m = (cuts_done * cut_length) / 1000
+        total_m = (total_cuts * cut_length) / 1000
         total_cost = total_m * cost_per_meter
 
-        st.markdown(f"✅ **Cuts Completed:** {cuts_done}")
-        st.markdown(f"❌ **Cuts Remaining:** {cuts_short}")
+        st.markdown(f"✅ **Cuts Completed:** {total_cuts}")
         st.markdown(f"💰 **Total Cost:** R {total_cost:,.2f}")
 
         # Export ZIP
@@ -158,7 +149,7 @@ elif mode == "📦 Nest From Stock":
             pdf.cell(0, 10, f"{label}: {value}", ln=True)
 
         pdf.cell(0, 10, f"Stock: {stock_qty} × {stock_length} mm", ln=True)
-        pdf.cell(0, 10, f"Required: {cut_qty} × {cut_length} mm", ln=True)
+        pdf.cell(0, 10, f"Cut Size: {cut_length} mm", ln=True)
         pdf.cell(0, 10, f"Cost per meter: R {cost_per_meter:.2f}", ln=True)
         pdf.cell(0, 10, f"Total cost: R {total_cost:.2f}", ln=True)
         pdf.ln(5)
@@ -177,7 +168,7 @@ elif mode == "📦 Nest From Stock":
         ]:
             txt += f"{label}: {value}\n"
 
-        txt += f"\nStock: {stock_qty} × {stock_length} mm\nRequired Cuts: {cut_qty} × {cut_length} mm\n"
+        txt += f"\nStock: {stock_qty} × {stock_length} mm\nCut Size: {cut_length} mm\n"
         txt += f"Cost per meter: R {cost_per_meter:.2f}\nTotal cost: R {total_cost:.2f}\n\n"
         for i, bar in enumerate(bars_used, 1):
             if bar["cuts"]:
