@@ -1,3 +1,10 @@
+import os
+import streamlit as st
+import pandas as pd
+from fpdf import FPDF  # ✅ REQUIRED for PDF generation
+from datetime import datetime
+import tempfile
+import zipfile
 # Export ZIP with safe PDF and TXT
 pdf = FPDF()
 pdf.add_page()
