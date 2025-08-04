@@ -93,6 +93,59 @@ if mode == "🔁 Nest by Required Cuts":
         st.markdown(f"💰 Total Estimated Cost: R {total_cost:,.2f}")
         st.markdown(f"📏 Total Offcut: {int(total_offcut)} mm")
 
+        # PDF and TXT export
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Courier", "", 11)
+
+        def safe(text):
+            return str(text).encode("latin-1", "replace").decode("latin-1")
+
+        pdf.cell(0, 10, safe(f"Nesting Report – {today}"), ln=True)
+        for label, value in [
+            ("Project", project_name), ("Location", project_location), ("Cutting", person_cutting),
+            ("Supplier", supplier_name), ("Order Number", order_number),
+            ("Drawing", drawing_number), ("Revision", revision_number), ("Material", material_type)
+        ]:
+            pdf.cell(0, 10, safe(f"{label}: {value}"), ln=True)
+
+        pdf.cell(0, 10, safe(f"Stock Length: {stock_length} mm"), ln=True)
+        pdf.cell(0, 10, safe(f"Total Estimated Cost: R {total_cost:.2f}"), ln=True)
+        pdf.cell(0, 10, safe(f"Total Offcut: {int(total_offcut)} mm"), ln=True)
+        pdf.ln(5)
+        for i, bar in enumerate(bars, 1):
+            bar_str = ", ".join(str(c) for c in bar)
+            used = sum(bar) + KERF * (len(bar) - 1)
+            offcut = stock_length - used
+            line = f"Bar {i}: [{bar_str}] => Total: {used} mm | Offcut: {offcut} mm"
+            pdf.multi_cell(0, 8, safe(line))
+
+        txt = f"Nesting Report – {today}\n"
+        for label, value in [
+            ("Project", project_name), ("Location", project_location), ("Person Cutting", person_cutting),
+            ("Supplier", supplier_name), ("Order Number", order_number),
+            ("Drawing Number", drawing_number), ("Revision", revision_number), ("Material", material_type)
+        ]:
+            txt += f"{label}: {value}\n"
+        txt += f"\nStock Length: {stock_length} mm\nTotal Cost: R {total_cost:.2f}\nTotal Offcut: {int(total_offcut)} mm\n\n"
+        for i, bar in enumerate(bars, 1):
+            bar_str = ", ".join(str(c) for c in bar)
+            used = sum(bar) + KERF * (len(bar) - 1)
+            offcut = stock_length - used
+            txt += f"Bar {i}: [{bar_str}] => Total: {used} mm | Offcut: {offcut} mm\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = os.path.join(tmpdir, "Report.pdf")
+            txt_path = os.path.join(tmpdir, "Report.txt")
+            zip_path = os.path.join(tmpdir, "Nest_Export.zip")
+            pdf.output(pdf_path)
+            with open(txt_path, "w") as f: f.write(txt)
+            with zipfile.ZipFile(zip_path, "w") as zipf:
+                zipf.write(pdf_path, "Report.pdf")
+                zipf.write(txt_path, "Report.txt")
+            with open(zip_path, "rb") as zf:
+                st.download_button("📦 Download ZIP", data=zf.read(), file_name="Nest_Export.zip", mime="application/zip")
+
 # -----------------------------------------
 # MODE 2: NEST FROM STOCK
 # -----------------------------------------
