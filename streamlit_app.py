@@ -93,7 +93,6 @@ if mode == "🔁 Nest by Required Cuts":
         st.markdown(f"💰 Total Estimated Cost: R {total_cost:,.2f}")
         st.markdown(f"📏 Total Offcut: {int(total_offcut)} mm")
 
-        # PDF and TXT export
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Courier", "", 11)
@@ -101,24 +100,24 @@ if mode == "🔁 Nest by Required Cuts":
         def safe(text):
             return str(text).encode("latin-1", "replace").decode("latin-1")
 
-        pdf.cell(0, 10, safe(f"Nesting Report – {today}"), ln=True)
+        pdf.cell(0, 6, safe(f"Nesting Report – {today}"), ln=True)
         for label, value in [
             ("Project", project_name), ("Location", project_location), ("Cutting", person_cutting),
             ("Supplier", supplier_name), ("Order Number", order_number),
             ("Drawing", drawing_number), ("Revision", revision_number), ("Material", material_type)
         ]:
-            pdf.cell(0, 10, safe(f"{label}: {value}"), ln=True)
+            pdf.cell(0, 6, safe(f"{label}: {value}"), ln=True)
 
-        pdf.cell(0, 10, safe(f"Stock Length: {stock_length} mm"), ln=True)
-        pdf.cell(0, 10, safe(f"Total Estimated Cost: R {total_cost:.2f}"), ln=True)
-        pdf.cell(0, 10, safe(f"Total Offcut: {int(total_offcut)} mm"), ln=True)
-        pdf.ln(5)
+        pdf.cell(0, 6, safe(f"Stock Length: {stock_length} mm"), ln=True)
+        pdf.cell(0, 6, safe(f"Total Estimated Cost: R {total_cost:.2f}"), ln=True)
+        pdf.cell(0, 6, safe(f"Total Offcut: {int(total_offcut)} mm"), ln=True)
+        pdf.ln(3)
         for i, bar in enumerate(bars, 1):
             bar_str = ", ".join(str(c) for c in bar)
             used = sum(bar) + KERF * (len(bar) - 1)
             offcut = stock_length - used
             line = f"Bar {i}: [{bar_str}] => Total: {used} mm | Offcut: {offcut} mm"
-            pdf.multi_cell(0, 8, safe(line))
+            pdf.multi_cell(0, 6, safe(line))
 
         txt = f"Nesting Report – {today}\n"
         for label, value in [
@@ -189,7 +188,6 @@ elif mode == "📦 Nest From Stock":
         st.markdown(f"✅ **Cuts Completed:** {total_cuts}")
         st.markdown(f"💰 **Total Cost:** R {total_cost:,.2f}")
 
-        # --- Safe PDF Export (Unicode-safe) ---
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Courier", "", 11)
@@ -197,26 +195,26 @@ elif mode == "📦 Nest From Stock":
         def safe(text):
             return str(text).encode("latin-1", "replace").decode("latin-1")
 
-        pdf.cell(0, 10, safe(f"Nesting Report – {today}"), ln=True)
+        pdf.cell(0, 6, safe(f"Nesting Report – {today}"), ln=True)
         for label, value in [
             ("Project", project_name), ("Location", project_location), ("Cutting", person_cutting),
             ("Supplier", supplier_name), ("Order Number", order_number),
             ("Drawing", drawing_number), ("Revision", revision_number), ("Material", material_type)
         ]:
-            pdf.cell(0, 10, safe(f"{label}: {value}"), ln=True)
+            pdf.cell(0, 6, safe(f"{label}: {value}"), ln=True)
 
-        pdf.cell(0, 10, safe(f"Stock: {stock_qty} × {stock_length} mm"), ln=True)
-        pdf.cell(0, 10, safe(f"Cut Size: {cut_length} mm"), ln=True)
-        pdf.cell(0, 10, safe(f"Cost per meter: R {cost_per_meter:.2f}"), ln=True)
-        pdf.cell(0, 10, safe(f"Total cost: R {total_cost:.2f}"), ln=True)
-        pdf.ln(5)
+        pdf.cell(0, 6, safe(f"Stock: {stock_qty} × {stock_length} mm"), ln=True)
+        pdf.cell(0, 6, safe(f"Cut Size: {cut_length} mm"), ln=True)
+        pdf.cell(0, 6, safe(f"Cost per meter: R {cost_per_meter:.2f}"), ln=True)
+        pdf.cell(0, 6, safe(f"Total cost: R {total_cost:.2f}"), ln=True)
+        pdf.ln(3)
         for i, bar in enumerate(bars_used, 1):
             if bar["cuts"]:
                 total = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
                 offcut = stock_length - total
                 bar_str = ", ".join(str(c) for c in bar["cuts"])
                 line = f"Bar {i}: [{bar_str}] => Total: {total} mm | Offcut: {offcut} mm"
-                pdf.multi_cell(0, 8, safe(line))
+                pdf.multi_cell(0, 6, safe(line))
 
         txt = f"Nesting Report – {today}\n"
         for label, value in [
