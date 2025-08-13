@@ -261,7 +261,7 @@ def build_cutlist_csv(summary_df: pd.DataFrame) -> bytes:
 
 def build_cutlist_txt(layouts: List[BarLayout]) -> bytes:
     out = io.StringIO()
-    out.write("CUT LIST (per bar)
+    out.write("CUT LIST (per bar)\n")
 ")
     for i, b in enumerate(layouts, start=1):
         out.write(f"Bar {i}: {bar_string(b)}
@@ -346,3 +346,4 @@ if not summary_df.empty:
     )
 
 st.caption("ZIP contains: PDF report, CSV cutlist, and TXT bar‑by‑bar list. Add more exports on request (per‑bar CSV, JSON, etc.).")
+
