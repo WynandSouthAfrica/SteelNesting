@@ -10,8 +10,8 @@ from datetime import datetime
 # ────────────────────────────────────────────────────────────────
 # App config
 # ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Steel Nesting Planner v13.5", layout="wide")
-st.title("🧰 Steel Nesting Planner v13.5 — Multi‑stock × Multi‑cut Nesting + ZIP Export")
+st.set_page_config(page_title="Steel Nesting Planner v13.6", layout="wide")
+st.title("🧰 Steel Nesting Planner v13.6 — Multi-stock × Multi-cut + ZIP Export")
 
 # Global settings
 KERF_DEFAULT = 2.0  # mm
@@ -21,7 +21,7 @@ KERF_DEFAULT = 2.0  # mm
 # ────────────────────────────────────────────────────────────────
 st.sidebar.header("⚙️ Settings")
 kerf = float(st.sidebar.number_input("Kerf (mm)", min_value=0.0, step=0.5, value=KERF_DEFAULT))
-st.sidebar.caption("Heuristic: First‑Fit Decreasing per bar. Kerf only between cuts.")
+st.sidebar.caption("Heuristic: First-Fit Decreasing per bar. Kerf only between cuts.")
 
 # Optional project metadata (minimal)
 st.sidebar.header("📁 Project (optional)")
@@ -169,8 +169,26 @@ def run_pool_nesting(cuts: pd.DataFrame, stock: pd.DataFrame):
     return bar_layouts, {"total_cost": round(cost_total, 2), "demand_before": demand_before, "demand_after": demand}, summary_rows
 
 # ────────────────────────────────────────────────────────────────
-# PDF + ZIP helpers
+# PDF + ZIP helpers (Unicode-safe for FPDF 1.x)
 # ────────────────────────────────────────────────────────────────
+def _safe_text(s: str) -> str:
+    """Sanitize text so FPDF Latin-1 can handle it."""
+    if not isinstance(s, str):
+        s = str(s)
+    repl = {
+        "–": "-", "—": "-", "‑": "-", "−": "-",
+        "×": "x", "•": "*", "…": "...",
+        "’": "'", "‘": "'", "“": '"', "”": '"',
+        "🧰": "", "📈": "", "🪵": "", "✅": "", "❗": "",
+        " ": " ",  # NBSP
+    }
+    out = "".join(repl.get(ch, ch) for ch in s)
+    try:
+        out.encode("latin-1")
+        return out
+    except UnicodeEncodeError:
+        return out.encode("latin-1", "replace").decode("latin-1")
+
 def bar_string(b: BarLayout) -> str:
     if not b.cuts:
         return f"[empty] | leftover: {b.leftover} mm"
@@ -184,48 +202,47 @@ def build_pdf_report(project: dict, kerf_mm: float, cuts_summary_df: pd.DataFram
 
     # Header
     pdf.set_font('Arial', 'B', 14)
-    pdf.cell(0, 8, 'Steel Nesting Planner – Multi‑stock × Multi‑cut Report', ln=1)
+    pdf.cell(0, 8, _safe_text('Steel Nesting Planner - Multi-stock x Multi-cut Report'), ln=1)
     pdf.set_font('Arial', '', 10)
     ts = datetime.now().strftime('%Y-%m-%d %H:%M')
-    meta_line = f"Generated: {ts}   Kerf: {kerf_mm:.2f} mm"
+    meta_line = _safe_text(f"Generated: {ts}   Kerf: {kerf_mm:.2f} mm")
     pdf.cell(0, 5, meta_line, ln=1)
 
     # Project block
     if any(project.values()):
         pdf.ln(2)
         pdf.set_font('Arial', 'B', 11)
-        pdf.cell(0, 6, 'Project', ln=1)
+        pdf.cell(0, 6, _safe_text('Project'), ln=1)
         pdf.set_font('Arial', '', 10)
         for k in ["Project Name", "Location", "Order No.", "Material Type"]:
             v = project.get(k, '')
             if v:
-                pdf.cell(0, 5, f"{k}: {v}", ln=1)
+                pdf.cell(0, 5, _safe_text(f"{k}: {v}"), ln=1)
 
     # Cuts summary table
     pdf.ln(2)
     pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 6, 'Fulfilment by Cut Size', ln=1)
+    pdf.cell(0, 6, _safe_text('Fulfilment by Cut Size'), ln=1)
     pdf.set_font('Arial', 'B', 9)
     headers = ["Cut (mm)", "Required", "Made", "Shortfall"]
     widths = [30, 30, 30, 30]
     for h, w in zip(headers, widths):
-        pdf.cell(w, 6, h, border=1, align='C')
+        pdf.cell(w, 6, _safe_text(h), border=1, align='C')
     pdf.ln(6)
     pdf.set_font('Arial', '', 9)
     for _, r in cuts_summary_df.iterrows():
-        pdf.cell(widths[0], 6, str(int(r['Cut Length (mm)'])), border=1)
-        pdf.cell(widths[1], 6, str(int(r['Required'])), border=1, align='R')
-        pdf.cell(widths[2], 6, str(int(r['Made'])), border=1, align='R')
-        pdf.cell(widths[3], 6, str(int(r['Shortfall'])), border=1, align='R')
+        pdf.cell(widths[0], 6, _safe_text(str(int(r['Cut Length (mm)']))), border=1)
+        pdf.cell(widths[1], 6, _safe_text(str(int(r['Required']))), border=1, align='R')
+        pdf.cell(widths[2], 6, _safe_text(str(int(r['Made']))), border=1, align='R')
+        pdf.cell(widths[3], 6, _safe_text(str(int(r['Shortfall']))), border=1, align='R')
         pdf.ln(6)
 
     # Stock used header
     pdf.ln(2)
     pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 6, 'Bar‑by‑Bar Layouts', ln=1)
+    pdf.cell(0, 6, _safe_text('Bar-by-Bar Layouts'), ln=1)
 
     pdf.set_font('Arial', '', 9)
-    # Group by stock row order
     grouped: Dict[int, List[BarLayout]] = {}
     for b in layouts:
         grouped.setdefault(b.index_in_pool, []).append(b)
@@ -238,10 +255,10 @@ def build_pdf_report(project: dict, kerf_mm: float, cuts_summary_df: pd.DataFram
         except Exception:
             stock_len = 0
         pdf.set_font('Arial', 'B', 9)
-        pdf.cell(0, 5, f"Stock {stock_len} mm — Bars used: {len(group)}", ln=1)
+        pdf.cell(0, 5, _safe_text(f"Stock {stock_len} mm — Bars used: {len(group)}".replace("—","-")), ln=1)
         pdf.set_font('Arial', '', 9)
         for j, b in enumerate(group, start=1):
-            pdf.multi_cell(0, 5, f"Bar {j}: {bar_string(b)}")
+            pdf.multi_cell(0, 5, _safe_text(f"Bar {j}: {bar_string(b)}"))
         pdf.ln(1)
 
     return bytes(pdf.output(dest='S').encode('latin1'))
@@ -294,7 +311,7 @@ colA[2].metric("Estimated Stock Cost", f"R {stats['total_cost']:,.2f}")
 
 # Group layouts by stock row (length)
 if layouts:
-    st.subheader("🪵 Bar‑by‑Bar Layouts (text view)")
+    st.subheader("🪵 Bar-by-Bar Layouts (text view)")
     grouped: Dict[int, List[BarLayout]] = {}
     for b in layouts:
         grouped.setdefault(b.index_in_pool, []).append(b)
@@ -331,4 +348,4 @@ if not summary_df.empty:
         mime="application/zip",
     )
 
-st.caption("ZIP contains: PDF report, CSV cutlist, and TXT bar‑by‑bar list. Add more exports on request (per‑bar CSV, JSON, etc.).")
+st.caption("ZIP contains: PDF report, CSV cutlist, and TXT bar-by-bar list.")
