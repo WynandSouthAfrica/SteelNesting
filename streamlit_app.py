@@ -75,7 +75,6 @@ if not stock_df.empty:
 # ────────────────────────────────────────────────────────────────
 # Core helpers
 # ────────────────────────────────────────────────────────────────
-
 class BarLayout:
     def __init__(self, stock_len: int, index_in_pool: int):
         self.stock_len = stock_len
@@ -169,17 +168,14 @@ def run_pool_nesting(cuts: pd.DataFrame, stock: pd.DataFrame):
 
     return bar_layouts, {"total_cost": round(cost_total, 2), "demand_before": demand_before, "demand_after": demand}, summary_rows
 
-
 # ────────────────────────────────────────────────────────────────
 # PDF + ZIP helpers
 # ────────────────────────────────────────────────────────────────
-
 def bar_string(b: BarLayout) -> str:
     if not b.cuts:
         return f"[empty] | leftover: {b.leftover} mm"
     seg = "|".join(str(x) for x in b.cuts)
     return f"|{seg}|  scrap: {b.leftover} mm"
-
 
 def build_pdf_report(project: dict, kerf_mm: float, cuts_summary_df: pd.DataFrame, stock_df: pd.DataFrame, layouts: List[BarLayout]) -> bytes:
     pdf = FPDF(orientation='P', unit='mm', format='A4')
@@ -237,7 +233,6 @@ def build_pdf_report(project: dict, kerf_mm: float, cuts_summary_df: pd.DataFram
     for row_idx, group in grouped.items():
         if row_idx is None:
             continue
-        # get stock meta
         try:
             stock_len = int(stock_df.iloc[row_idx]["Stock Length (mm)"])
         except Exception:
@@ -249,25 +244,19 @@ def build_pdf_report(project: dict, kerf_mm: float, cuts_summary_df: pd.DataFram
             pdf.multi_cell(0, 5, f"Bar {j}: {bar_string(b)}")
         pdf.ln(1)
 
-    # Output bytes
     return bytes(pdf.output(dest='S').encode('latin1'))
-
 
 def build_cutlist_csv(summary_df: pd.DataFrame) -> bytes:
     out = io.StringIO()
     summary_df.to_csv(out, index=False)
     return out.getvalue().encode('utf-8')
 
-
 def build_cutlist_txt(layouts: List[BarLayout]) -> bytes:
     out = io.StringIO()
     out.write("CUT LIST (per bar)\n")
-")
     for i, b in enumerate(layouts, start=1):
-        out.write(f"Bar {i}: {bar_string(b)}
-")
+        out.write(f"Bar {i}: {bar_string(b)}\n")
     return out.getvalue().encode('utf-8')
-
 
 def build_zip(project: dict, kerf_mm: float, cuts_summary_df: pd.DataFrame, stock_df: pd.DataFrame, layouts: List[BarLayout]) -> bytes:
     pdf_bytes = build_pdf_report(project, kerf_mm, cuts_summary_df, stock_df, layouts)
@@ -282,7 +271,6 @@ def build_zip(project: dict, kerf_mm: float, cuts_summary_df: pd.DataFrame, stoc
         z.writestr(f"{base}/cutlist_{ts}.csv", csv_bytes)
         z.writestr(f"{base}/cutlist_{ts}.txt", txt_bytes)
     return zbuf.getvalue()
-
 
 # ────────────────────────────────────────────────────────────────
 # Execute
@@ -307,7 +295,6 @@ colA[2].metric("Estimated Stock Cost", f"R {stats['total_cost']:,.2f}")
 # Group layouts by stock row (length)
 if layouts:
     st.subheader("🪵 Bar‑by‑Bar Layouts (text view)")
-    # Grouped display
     grouped: Dict[int, List[BarLayout]] = {}
     for b in layouts:
         grouped.setdefault(b.index_in_pool, []).append(b)
@@ -334,7 +321,6 @@ project = {
     "Order No.": order_no,
     "Material Type": material_type,
 }
-
 if not summary_df.empty:
     zip_bytes = build_zip(project, kerf, summary_df, stock_df.reset_index(drop=True), layouts)
     default_name = (project_name or "nesting") + "_outputs.zip"
@@ -346,4 +332,3 @@ if not summary_df.empty:
     )
 
 st.caption("ZIP contains: PDF report, CSV cutlist, and TXT bar‑by‑bar list. Add more exports on request (per‑bar CSV, JSON, etc.).")
-
