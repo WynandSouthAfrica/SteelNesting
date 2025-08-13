@@ -2,25 +2,33 @@ import math
 from typing import List, Dict, Tuple
 import pandas as pd
 import streamlit as st
+from fpdf import FPDF
+import io
+import zipfile
+from datetime import datetime
 
 # ────────────────────────────────────────────────────────────────
 # App config
 # ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Steel Nesting Planner v13.4", layout="wide")
-st.title("🧰 Steel Nesting Planner v13.4 — Multi‑stock × Multi‑cut Nesting")
+st.set_page_config(page_title="Steel Nesting Planner v13.5", layout="wide")
+st.title("🧰 Steel Nesting Planner v13.5 — Multi‑stock × Multi‑cut Nesting + ZIP Export")
 
 # Global settings
-KERF_DEFAULT = 2.0  # mm (your preference)
+KERF_DEFAULT = 2.0  # mm
 
 # ────────────────────────────────────────────────────────────────
 # Sidebar controls
 # ────────────────────────────────────────────────────────────────
 st.sidebar.header("⚙️ Settings")
 kerf = float(st.sidebar.number_input("Kerf (mm)", min_value=0.0, step=0.5, value=KERF_DEFAULT))
+st.sidebar.caption("Heuristic: First‑Fit Decreasing per bar. Kerf only between cuts.")
 
-st.sidebar.caption(
-    "Greedy heuristic: First‑Fit Decreasing per bar. Longest remaining cut placed first until no fit."
-)
+# Optional project metadata (minimal)
+st.sidebar.header("📁 Project (optional)")
+project_name = st.sidebar.text_input("Project Name", "")
+project_location = st.sidebar.text_input("Location", "")
+order_no = st.sidebar.text_input("Order No.", "")
+material_type = st.sidebar.text_input("Material Type", "")
 
 # ────────────────────────────────────────────────────────────────
 # Inputs
@@ -71,9 +79,8 @@ if not stock_df.empty:
 class BarLayout:
     def __init__(self, stock_len: int, index_in_pool: int):
         self.stock_len = stock_len
-        self.index_in_pool = index_in_pool  # for grouping by stock length row
+        self.index_in_pool = index_in_pool  # link to stock row
         self.cuts: List[int] = []
-        self.used = 0.0
 
     @property
     def n(self) -> int:
@@ -94,19 +101,15 @@ class BarLayout:
     def can_fit(self, cut_len: int) -> bool:
         if cut_len <= 0:
             return False
-        new_total = float(sum(self.cuts) + cut_len) + (self.n) * kerf  # kerf increases by one if we add a piece
+        new_total = float(sum(self.cuts) + cut_len) + (self.n) * kerf
         return new_total <= self.stock_len + 1e-9
 
     def add(self, cut_len: int):
         self.cuts.append(int(cut_len))
 
 
-def first_fit_decreasing_pack(stock_len: int, demand: Dict[int, int]) -> Tuple[BarLayout, Dict[int, int]]:
-    """Pack one bar of length stock_len using FFD against remaining demand.
-    Returns (bar_layout, updated_demand)."""
+def first_fit_decreasing_pack(stock_len: int, demand: Dict[int, int]) -> Tuple['BarLayout', Dict[int, int]]:
     bar = BarLayout(stock_len, index_in_pool=-1)
-
-    # sort unique cut lengths by descending
     lengths_desc = sorted([L for L, q in demand.items() if q > 0], reverse=True)
 
     placed_any = True
@@ -117,16 +120,11 @@ def first_fit_decreasing_pack(stock_len: int, demand: Dict[int, int]) -> Tuple[B
                 bar.add(L)
                 demand[L] -= 1
                 placed_any = True
-            # Try next size
     return bar, demand
 
 
-# ────────────────────────────────────────────────────────────────
-# Run the nesting across the pool
-# ────────────────────────────────────────────────────────────────
-
 def run_pool_nesting(cuts: pd.DataFrame, stock: pd.DataFrame):
-    # Demand map
+    # Build demand
     demand: Dict[int, int] = {}
     for _, r in cuts.iterrows():
         L = int(r["Cut Length (mm)"])
@@ -137,18 +135,20 @@ def run_pool_nesting(cuts: pd.DataFrame, stock: pd.DataFrame):
     if not demand:
         return [], {"total_cost": 0.0, "demand_before": {}, "demand_after": {}}, []
 
-    # Stock list [(length, bars, cpm)] preserving row order for cost and reporting
-    stock_rows = [(int(r["Stock Length (mm)"]), int(r["Quantity"]), float(r["Cost per Meter (optional)"])) for _, r in stock.iterrows() if int(r["Quantity"]) > 0 and int(r["Stock Length (mm)"]) > 0]
+    # Stock list preserving row order
+    stock_rows = [(
+        int(r["Stock Length (mm)"]),
+        int(r["Quantity"]),
+        float(r["Cost per Meter (optional)"])
+    ) for _, r in stock.iterrows() if int(r["Quantity"]) > 0 and int(r["Stock Length (mm)"]) > 0]
 
     bar_layouts: List[BarLayout] = []
     cost_total = 0.0
     demand_before = demand.copy()
 
     for row_idx, (Lstock, qty, cpm) in enumerate(stock_rows):
-        # cost accumulation
         if cpm > 0:
             cost_total += (Lstock / 1000.0) * cpm * qty
-
         for _ in range(qty):
             if not any(demand.values()):
                 break
@@ -156,19 +156,132 @@ def run_pool_nesting(cuts: pd.DataFrame, stock: pd.DataFrame):
             bar.index_in_pool = row_idx
             bar_layouts.append(bar)
 
-    # Build per‑size fulfillment summary
+    # Summary per cut size
     summary_rows = []
     for L, req in sorted(demand_before.items(), reverse=True):
-        done = req - demand.get(L, 0)
-        short = max(0, req - done)
+        made = req - demand.get(L, 0)
         summary_rows.append({
             "Cut Length (mm)": L,
             "Required": req,
-            "Made": done,
-            "Shortfall": short,
+            "Made": made,
+            "Shortfall": max(0, req - made),
         })
 
     return bar_layouts, {"total_cost": round(cost_total, 2), "demand_before": demand_before, "demand_after": demand}, summary_rows
+
+
+# ────────────────────────────────────────────────────────────────
+# PDF + ZIP helpers
+# ────────────────────────────────────────────────────────────────
+
+def bar_string(b: BarLayout) -> str:
+    if not b.cuts:
+        return f"[empty] | leftover: {b.leftover} mm"
+    seg = "|".join(str(x) for x in b.cuts)
+    return f"|{seg}|  scrap: {b.leftover} mm"
+
+
+def build_pdf_report(project: dict, kerf_mm: float, cuts_summary_df: pd.DataFrame, stock_df: pd.DataFrame, layouts: List[BarLayout]) -> bytes:
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+
+    # Header
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 8, 'Steel Nesting Planner – Multi‑stock × Multi‑cut Report', ln=1)
+    pdf.set_font('Arial', '', 10)
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M')
+    meta_line = f"Generated: {ts}   Kerf: {kerf_mm:.2f} mm"
+    pdf.cell(0, 5, meta_line, ln=1)
+
+    # Project block
+    if any(project.values()):
+        pdf.ln(2)
+        pdf.set_font('Arial', 'B', 11)
+        pdf.cell(0, 6, 'Project', ln=1)
+        pdf.set_font('Arial', '', 10)
+        for k in ["Project Name", "Location", "Order No.", "Material Type"]:
+            v = project.get(k, '')
+            if v:
+                pdf.cell(0, 5, f"{k}: {v}", ln=1)
+
+    # Cuts summary table
+    pdf.ln(2)
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 6, 'Fulfilment by Cut Size', ln=1)
+    pdf.set_font('Arial', 'B', 9)
+    headers = ["Cut (mm)", "Required", "Made", "Shortfall"]
+    widths = [30, 30, 30, 30]
+    for h, w in zip(headers, widths):
+        pdf.cell(w, 6, h, border=1, align='C')
+    pdf.ln(6)
+    pdf.set_font('Arial', '', 9)
+    for _, r in cuts_summary_df.iterrows():
+        pdf.cell(widths[0], 6, str(int(r['Cut Length (mm)'])), border=1)
+        pdf.cell(widths[1], 6, str(int(r['Required'])), border=1, align='R')
+        pdf.cell(widths[2], 6, str(int(r['Made'])), border=1, align='R')
+        pdf.cell(widths[3], 6, str(int(r['Shortfall'])), border=1, align='R')
+        pdf.ln(6)
+
+    # Stock used header
+    pdf.ln(2)
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 6, 'Bar‑by‑Bar Layouts', ln=1)
+
+    pdf.set_font('Arial', '', 9)
+    # Group by stock row order
+    grouped: Dict[int, List[BarLayout]] = {}
+    for b in layouts:
+        grouped.setdefault(b.index_in_pool, []).append(b)
+
+    for row_idx, group in grouped.items():
+        if row_idx is None:
+            continue
+        # get stock meta
+        try:
+            stock_len = int(stock_df.iloc[row_idx]["Stock Length (mm)"])
+        except Exception:
+            stock_len = 0
+        pdf.set_font('Arial', 'B', 9)
+        pdf.cell(0, 5, f"Stock {stock_len} mm — Bars used: {len(group)}", ln=1)
+        pdf.set_font('Arial', '', 9)
+        for j, b in enumerate(group, start=1):
+            pdf.multi_cell(0, 5, f"Bar {j}: {bar_string(b)}")
+        pdf.ln(1)
+
+    # Output bytes
+    return bytes(pdf.output(dest='S').encode('latin1'))
+
+
+def build_cutlist_csv(summary_df: pd.DataFrame) -> bytes:
+    out = io.StringIO()
+    summary_df.to_csv(out, index=False)
+    return out.getvalue().encode('utf-8')
+
+
+def build_cutlist_txt(layouts: List[BarLayout]) -> bytes:
+    out = io.StringIO()
+    out.write("CUT LIST (per bar)
+")
+    for i, b in enumerate(layouts, start=1):
+        out.write(f"Bar {i}: {bar_string(b)}
+")
+    return out.getvalue().encode('utf-8')
+
+
+def build_zip(project: dict, kerf_mm: float, cuts_summary_df: pd.DataFrame, stock_df: pd.DataFrame, layouts: List[BarLayout]) -> bytes:
+    pdf_bytes = build_pdf_report(project, kerf_mm, cuts_summary_df, stock_df, layouts)
+    csv_bytes = build_cutlist_csv(cuts_summary_df)
+    txt_bytes = build_cutlist_txt(layouts)
+
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, mode='w', compression=zipfile.ZIP_DEFLATED) as z:
+        ts = datetime.now().strftime('%Y%m%d_%H%M')
+        base = project.get("Project Name", "nesting") or "nesting"
+        z.writestr(f"{base}/report_{ts}.pdf", pdf_bytes)
+        z.writestr(f"{base}/cutlist_{ts}.csv", csv_bytes)
+        z.writestr(f"{base}/cutlist_{ts}.txt", txt_bytes)
+    return zbuf.getvalue()
 
 
 # ────────────────────────────────────────────────────────────────
@@ -181,7 +294,7 @@ if cuts_df.empty or stock_df.empty:
 layouts, stats, summary_rows = run_pool_nesting(cuts_df, stock_df)
 
 # Summary per cut size
-st.subheader("📈 Fulfillment Summary by Cut Size")
+st.subheader("📈 Fulfilment Summary by Cut Size")
 summary_df = pd.DataFrame(summary_rows)
 st.dataframe(summary_df, use_container_width=True)
 
@@ -193,30 +306,18 @@ colA[2].metric("Estimated Stock Cost", f"R {stats['total_cost']:,.2f}")
 
 # Group layouts by stock row (length)
 if layouts:
-    st.subheader("🪵 Bar‑by‑Bar Layouts")
-
-    # Build simple text visualization per bar
-    def bar_string(b: BarLayout) -> str:
-        if not b.cuts:
-            return f"[empty] | leftover: {b.leftover} mm"
-        segments = "|".join(str(x) for x in b.cuts)
-        return f"|{segments}|  scrap: {b.leftover} mm"
-
-    # Map row index to metadata
-    pool_meta = []
-    for i, r in stock_df.iterrows():
-        pool_meta.append({"row": i, "stock_len": int(r["Stock Length (mm)"])} )
-
-    # Render grouped
-    for row_idx, (Lstock, qty, _cpm) in enumerate([(int(r["Stock Length (mm)"]), int(r["Quantity"]), float(r["Cost per Meter (optional)"])) for _, r in stock_df.iterrows()]):
-        group = [b for b in layouts if b.index_in_pool == row_idx]
-        if not group:
-            continue
-        st.markdown(f"**Stock {Lstock} mm** — Bars used: {len(group)}")
+    st.subheader("🪵 Bar‑by‑Bar Layouts (text view)")
+    # Grouped display
+    grouped: Dict[int, List[BarLayout]] = {}
+    for b in layouts:
+        grouped.setdefault(b.index_in_pool, []).append(b)
+    for row_idx, group in grouped.items():
+        stock_len = int(stock_df.iloc[row_idx]["Stock Length (mm)"]) if row_idx < len(stock_df) else 0
+        st.markdown(f"**Stock {stock_len} mm** — Bars used: {len(group)}")
         for j, b in enumerate(group, start=1):
             st.text(f"Bar {j}: {bar_string(b)}")
 
-# Leftover demand
+# Remaining demand
 remaining = stats["demand_after"]
 if any(remaining.values()):
     st.error("❗Not enough stock to fulfill all cuts.")
@@ -224,7 +325,24 @@ if any(remaining.values()):
 else:
     st.success("✅ All required cuts satisfied with given stock pool.")
 
-st.caption(
-    "Algorithm: First‑Fit Decreasing per bar using the current kerf. "
-    "We only insert kerf between pieces, never at the ends."
-)
+# ────────────────────────────────────────────────────────────────
+# ZIP export
+# ────────────────────────────────────────────────────────────────
+project = {
+    "Project Name": project_name,
+    "Location": project_location,
+    "Order No.": order_no,
+    "Material Type": material_type,
+}
+
+if not summary_df.empty:
+    zip_bytes = build_zip(project, kerf, summary_df, stock_df.reset_index(drop=True), layouts)
+    default_name = (project_name or "nesting") + "_outputs.zip"
+    st.download_button(
+        label="📦 Download ZIP (Report + Cutlist)",
+        data=zip_bytes,
+        file_name=default_name,
+        mime="application/zip",
+    )
+
+st.caption("ZIP contains: PDF report, CSV cutlist, and TXT bar‑by‑bar list. Add more exports on request (per‑bar CSV, JSON, etc.).")
