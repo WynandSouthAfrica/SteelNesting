@@ -1,253 +1,160 @@
-import os
-import streamlit as st
+import math
 import pandas as pd
-from fpdf import FPDF
-from datetime import datetime
-import tempfile
-import zipfile
+import streamlit as st
 
-# App setup
-st.set_page_config(page_title="Steel Nesting Planner v13.2", layout="wide")
-st.title("🧰 Steel Nesting Planner v13.2 – Multi-Mode with Metadata")
+# ────────────────────────────────────────────────────────────────
+# App config
+# ────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="Steel Nesting Planner v13.3", layout="wide")
+st.title("🧰 Steel Nesting Planner v13.3 — Nest from Stock (Multi‑stock pool)")
 
-KERF = 3  # mm
-today = datetime.today().strftime('%Y-%m-%d')
+# Global settings
+KERF_DEFAULT = 2  # mm (you asked for 2 mm previously)
 
-# -----------------------------------------
-# 🧾 Project Metadata Section
-# -----------------------------------------
-st.header("📁 Project Details")
+# ────────────────────────────────────────────────────────────────
+# Sidebar controls
+# ────────────────────────────────────────────────────────────────
+st.sidebar.header("⚙️ Settings")
+kerf = st.sidebar.number_input("Kerf (mm)", min_value=0.0, step=0.5, value=float(KERF_DEFAULT))
 
-colA1, colA2 = st.columns(2)
-with colA1:
-    project_name = st.text_input("Project Name", "PG Bison Extraction Ducts")
-    project_location = st.text_input("Project Location", "Ugie")
-    person_cutting = st.text_input("Person Cutting", "Wynand")
-    supplier_name = st.text_input("Supplier", "Macsteel")
-with colA2:
-    order_number = st.text_input("Order Number", "PO-2024-145")
-    drawing_number = st.text_input("Drawing Number", "1450-002-04")
-    revision_number = st.text_input("Revision Number", "01")
-    material_type = st.text_input("Material Type", "150x150x10 FB")
+# ────────────────────────────────────────────────────────────────
+# Inputs
+# ────────────────────────────────────────────────────────────────
+st.header("📏 Cut Definition")
+col_cut = st.columns(2)
+with col_cut[0]:
+    cut_len = st.number_input("Cut Length (mm)", min_value=1, step=1, value=550)
+with col_cut[1]:
+    target_qty = st.number_input("Target Pieces (optional)", min_value=0, step=1, value=0, help="If > 0, we'll show how many bars are needed to hit this target")
 
-st.divider()
+st.header("📦 Stock Pool (multiple stock lengths)")
+help_txt = (
+    "Add each distinct stock length you have and how many bars of that length are on hand.\n"
+    "The nesting will pull from this entire pool."
+)
+st.caption(help_txt)
 
-# -----------------------------------------
-# MODE SELECTOR
-# -----------------------------------------
-mode = st.radio("Select Nesting Mode:", [
-    "🔁 Nest by Required Cuts",
-    "📦 Nest From Stock",
-    "📊 View Summary Report"
-])
+# Editable stock table
+init_rows = pd.DataFrame({
+    "Stock Length (mm)": [6000],
+    "Quantity": [4],
+    "Cost per Meter (optional)": [0.0],
+})
+stock_df = st.data_editor(
+    init_rows,
+    num_rows="dynamic",
+    use_container_width=True,
+    key="stock_pool_editor",
+)
 
-# -----------------------------------------
-# MODE 1: NEST BY REQUIRED CUTS
-# -----------------------------------------
-if mode == "🔁 Nest by Required Cuts":
-    st.header("🔁 Nest by Required Cuts (Estimate Stock Needed)")
+# Clean input
+stock_df = stock_df.fillna({"Quantity": 0, "Cost per Meter (optional)": 0.0})
+stock_df["Stock Length (mm)"] = stock_df["Stock Length (mm)"].astype(int)
+stock_df["Quantity"] = stock_df["Quantity"].astype(int).clip(lower=0)
+stock_df["Cost per Meter (optional)"] = stock_df["Cost per Meter (optional)"].astype(float).clip(lower=0)
 
-    stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=100)
-    cost_per_meter = st.number_input("Cost per Meter", min_value=0.0, value=125.0)
-    section_tag = material_type
+# ────────────────────────────────────────────────────────────────
+# Core helpers
+# ────────────────────────────────────────────────────────────────
 
-    cut_data = pd.DataFrame(st.data_editor(
-        [{"Length": 550, "Qty": 4}, {"Length": 750, "Qty": 2}],
-        num_rows="dynamic",
-        use_container_width=True
-    ))
+def pieces_per_bar(stock_len: int, cut: int, kerf_mm: float) -> tuple[int, int]:
+    """Return (pieces, leftover_mm) for a single bar.
+    Formula: n = floor((L + kerf) / (cut + kerf)).
+    leftover = L - n*cut - (n-1)*kerf  (for n>0). If n==0, leftover=L.
+    """
+    if cut <= 0 or stock_len <= 0:
+        return 0, stock_len
+    denom = cut + kerf_mm
+    if denom <= 0:
+        return 0, stock_len
+    n = int(math.floor((stock_len + kerf_mm) / denom))
+    if n <= 0:
+        return 0, stock_len
+    leftover = stock_len - n * cut - max(0, n - 1) * kerf_mm
+    return n, int(round(leftover))
 
-    lengths = []
-    for _, row in cut_data.iterrows():
-        try:
-            lengths += [int(row["Length"])] * int(row["Qty"])
-        except:
-            pass
 
-    def nest_lengths(lengths, stock_length, kerf):
-        bars = []
-        for length in sorted(lengths, reverse=True):
-            placed = False
-            for bar in bars:
-                remaining = stock_length - sum(bar) - kerf * len(bar)
-                if length + kerf <= remaining:
-                    bar.append(length)
-                    placed = True
-                    break
-            if not placed:
-                bars.append([length])
-        return bars
+def compute_pool_breakdown(df: pd.DataFrame, cut: int, kerf_mm: float):
+    rows = []
+    total_pieces = 0
+    total_bars = 0
+    total_cost = 0.0
 
-    if st.button("Run Nesting"):
-        bars = nest_lengths(lengths, stock_length, KERF)
-        total_cut = sum(lengths)
-        total_cost = (total_cut / 1000) * cost_per_meter
-        total_offcut = sum(stock_length - (sum(bar) + KERF * (len(bar)-1 if len(bar) > 0 else 0)) for bar in bars)
+    for _, r in df.iterrows():
+        L = int(r["Stock Length (mm)"])
+        qty = int(r["Quantity"])
+        cpm = float(r["Cost per Meter (optional)"])
+        if qty <= 0 or L <= 0:
+            continue
+        n_per_bar, leftover = pieces_per_bar(L, cut, kerf_mm)
+        pieces = n_per_bar * qty
+        cost = (L / 1000.0) * cpm * qty if cpm > 0 else 0.0
+        rows.append({
+            "Stock Length (mm)": L,
+            "Bars": qty,
+            "Pieces/Bar": n_per_bar,
+            "Total Pieces": pieces,
+            "Leftover per Bar (mm)": leftover,
+            "Cost per Meter": cpm if cpm > 0 else None,
+            "Estimated Cost": round(cost, 2) if cost > 0 else None,
+        })
+        total_pieces += pieces
+        total_bars += qty
+        total_cost += cost
 
-        st.success(f"Bars Required: {len(bars)}")
-        for i, bar in enumerate(bars, 1):
-            used = sum(bar) + KERF * (len(bar) - 1)
-            offcut = stock_length - used
-            st.text(f"Bar {i}: {bar} => Total: {used} mm | Offcut: {offcut} mm")
+    return pd.DataFrame(rows), total_pieces, total_bars, round(total_cost, 2)
 
-        st.markdown(f"💰 Total Estimated Cost: R {total_cost:,.2f}")
-        st.markdown(f"📏 Total Offcut: {int(total_offcut)} mm")
 
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Courier", "", 11)
+# ────────────────────────────────────────────────────────────────
+# Compute & display
+# ────────────────────────────────────────────────────────────────
+if cut_len <= 0:
+    st.warning("Enter a valid cut length.")
+    st.stop()
 
-        def safe(text):
-            return str(text).encode("latin-1", "replace").decode("latin-1")
+breakdown_df, total_pcs, total_bars, total_cost = compute_pool_breakdown(stock_df, cut_len, kerf)
 
-        pdf.cell(0, 6, safe(f"Nesting Report – {today}"), ln=True)
-        for label, value in [
-            ("Project", project_name), ("Location", project_location), ("Cutting", person_cutting),
-            ("Supplier", supplier_name), ("Order Number", order_number),
-            ("Drawing", drawing_number), ("Revision", revision_number), ("Material", material_type)
-        ]:
-            pdf.cell(0, 6, safe(f"{label}: {value}"), ln=True)
+st.subheader("📊 Stock Utilization")
+st.dataframe(breakdown_df, use_container_width=True)
 
-        pdf.cell(0, 6, safe(f"Stock Length: {stock_length} mm"), ln=True)
-        pdf.cell(0, 6, safe(f"Total Estimated Cost: R {total_cost:.2f}"), ln=True)
-        pdf.cell(0, 6, safe(f"Total Offcut: {int(total_offcut)} mm"), ln=True)
-        pdf.ln(3)
-        for i, bar in enumerate(bars, 1):
-            bar_str = ", ".join(str(c) for c in bar)
-            used = sum(bar) + KERF * (len(bar) - 1)
-            offcut = stock_length - used
-            line = f"Bar {i}: [{bar_str}] => Total: {used} mm | Offcut: {offcut} mm"
-            pdf.multi_cell(0, 6, safe(line))
+# Totals
+col_tot = st.columns(4)
+col_tot[0].metric("Total Bars", total_bars)
+col_tot[1].metric("Total Pieces Possible", total_pcs)
+col_tot[2].metric("Kerf (mm)", kerf)
+col_tot[3].metric("Estimated Total Cost", f"R {total_cost:,.2f}")
 
-        txt = f"Nesting Report – {today}\n"
-        for label, value in [
-            ("Project", project_name), ("Location", project_location), ("Person Cutting", person_cutting),
-            ("Supplier", supplier_name), ("Order Number", order_number),
-            ("Drawing Number", drawing_number), ("Revision", revision_number), ("Material", material_type)
-        ]:
-            txt += f"{label}: {value}\n"
-        txt += f"\nStock Length: {stock_length} mm\nTotal Cost: R {total_cost:.2f}\nTotal Offcut: {int(total_offcut)} mm\n\n"
-        for i, bar in enumerate(bars, 1):
-            bar_str = ", ".join(str(c) for c in bar)
-            used = sum(bar) + KERF * (len(bar) - 1)
-            offcut = stock_length - used
-            txt += f"Bar {i}: [{bar_str}] => Total: {used} mm | Offcut: {offcut} mm\n"
+# If a target was provided, estimate bars needed
+if target_qty and target_qty > 0:
+    st.subheader("🎯 Bars Required for Target Pieces")
+    # Greedy: consume bars in the order given until we hit target
+    remaining = target_qty
+    used_rows = []
+    for _, r in stock_df.iterrows():
+        L = int(r["Stock Length (mm)"])
+        qty = int(r["Quantity"])
+        if qty <= 0:
+            continue
+        n_per_bar, _ = pieces_per_bar(L, cut_len, kerf)
+        if n_per_bar <= 0:
+            continue
+        bars_needed = math.ceil(remaining / n_per_bar)
+        take = min(qty, bars_needed)
+        got = take * n_per_bar
+        used_rows.append({"Stock Length (mm)": L, "Bars Used": take, "Pieces From These Bars": got})
+        remaining -= got
+        if remaining <= 0:
+            break
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pdf_path = os.path.join(tmpdir, "Report.pdf")
-            txt_path = os.path.join(tmpdir, "Report.txt")
-            zip_path = os.path.join(tmpdir, "Nest_Export.zip")
-            pdf.output(pdf_path)
-            with open(txt_path, "w") as f: f.write(txt)
-            with zipfile.ZipFile(zip_path, "w") as zipf:
-                zipf.write(pdf_path, "Report.pdf")
-                zipf.write(txt_path, "Report.txt")
-            with open(zip_path, "rb") as zf:
-                st.download_button("📦 Download ZIP", data=zf.read(), file_name="Nest_Export.zip", mime="application/zip")
+    used_df = pd.DataFrame(used_rows)
+    total_used_bars = int(used_df["Bars Used"].sum()) if not used_df.empty else 0
+    made = int(used_df["Pieces From These Bars"].sum()) if not used_df.empty else 0
+    st.dataframe(used_df, use_container_width=True)
+    if remaining > 0:
+        st.error(f"Not enough stock to reach {target_qty} pieces. You will be short by {remaining}.")
+    st.metric("Bars Needed (given pool order)", total_used_bars)
+    st.metric("Pieces Achieved", made)
 
-# -----------------------------------------
-# MODE 2: NEST FROM STOCK
-# -----------------------------------------
-elif mode == "📦 Nest From Stock":
-    st.header("📦 Nest From Available Stock")
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        stock_length = st.number_input("Stock Length (mm)", min_value=1000, max_value=20000, value=6000, step=100)
-    with col2:
-        stock_qty = st.number_input("Stock Quantity", min_value=1, value=4)
-
-    cut_length = st.number_input("Cut Length (mm)", min_value=10, max_value=stock_length, value=550)
-    cost_per_meter = st.number_input("Cost Per Meter (optional)", min_value=0.0, value=0.0, step=1.0)
-
-    def simulate_nesting(stock_length, stock_qty, cut_length, kerf):
-        bars = [{"cuts": [], "remaining": stock_length} for _ in range(stock_qty)]
-        for bar in bars:
-            while True:
-                required = cut_length + (kerf if bar["cuts"] else 0)
-                if bar["remaining"] >= required:
-                    bar["cuts"].append(cut_length)
-                    bar["remaining"] -= required
-                else:
-                    break
-        total_cuts = sum(len(bar["cuts"]) for bar in bars)
-        return bars, total_cuts
-
-    if st.button("🧠 Simulate Nesting"):
-        bars_used, total_cuts = simulate_nesting(stock_length, stock_qty, cut_length, KERF)
-        st.header("📦 Nesting Results")
-        for i, bar in enumerate(bars_used, 1):
-            if bar["cuts"]:
-                total = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
-                offcut = stock_length - total
-                st.text(f"Bar {i}: {bar['cuts']} => Total: {total} mm | Offcut: {offcut} mm")
-
-        total_m = (total_cuts * cut_length) / 1000
-        total_cost = total_m * cost_per_meter
-
-        st.markdown(f"✅ **Cuts Completed:** {total_cuts}")
-        st.markdown(f"💰 **Total Cost:** R {total_cost:,.2f}")
-
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Courier", "", 11)
-
-        def safe(text):
-            return str(text).encode("latin-1", "replace").decode("latin-1")
-
-        pdf.cell(0, 6, safe(f"Nesting Report – {today}"), ln=True)
-        for label, value in [
-            ("Project", project_name), ("Location", project_location), ("Cutting", person_cutting),
-            ("Supplier", supplier_name), ("Order Number", order_number),
-            ("Drawing", drawing_number), ("Revision", revision_number), ("Material", material_type)
-        ]:
-            pdf.cell(0, 6, safe(f"{label}: {value}"), ln=True)
-
-        pdf.cell(0, 6, safe(f"Stock: {stock_qty} × {stock_length} mm"), ln=True)
-        pdf.cell(0, 6, safe(f"Cut Size: {cut_length} mm"), ln=True)
-        pdf.cell(0, 6, safe(f"Cost per meter: R {cost_per_meter:.2f}"), ln=True)
-        pdf.cell(0, 6, safe(f"Total cost: R {total_cost:.2f}"), ln=True)
-        pdf.ln(3)
-        for i, bar in enumerate(bars_used, 1):
-            if bar["cuts"]:
-                total = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
-                offcut = stock_length - total
-                bar_str = ", ".join(str(c) for c in bar["cuts"])
-                line = f"Bar {i}: [{bar_str}] => Total: {total} mm | Offcut: {offcut} mm"
-                pdf.multi_cell(0, 6, safe(line))
-
-        txt = f"Nesting Report – {today}\n"
-        for label, value in [
-            ("Project", project_name), ("Location", project_location), ("Person Cutting", person_cutting),
-            ("Supplier", supplier_name), ("Order Number", order_number),
-            ("Drawing Number", drawing_number), ("Revision", revision_number), ("Material", material_type)
-        ]:
-            txt += f"{label}: {value}\n"
-
-        txt += f"\nStock: {stock_qty} × {stock_length} mm\nCut Size: {cut_length} mm\n"
-        txt += f"Cost per meter: R {cost_per_meter:.2f}\nTotal cost: R {total_cost:.2f}\n\n"
-        for i, bar in enumerate(bars_used, 1):
-            if bar["cuts"]:
-                total = sum(bar["cuts"]) + KERF * (len(bar["cuts"]) - 1)
-                offcut = stock_length - total
-                bar_str = ", ".join(str(c) for c in bar["cuts"])
-                txt += f"Bar {i}: [{bar_str}] => Total: {total} mm | Offcut: {offcut} mm\n"
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pdf_path = os.path.join(tmpdir, "Report.pdf")
-            txt_path = os.path.join(tmpdir, "Report.txt")
-            zip_path = os.path.join(tmpdir, "Nest_Export.zip")
-            pdf.output(pdf_path)
-            with open(txt_path, "w") as f: f.write(txt)
-            with zipfile.ZipFile(zip_path, "w") as zipf:
-                zipf.write(pdf_path, "Report.pdf")
-                zipf.write(txt_path, "Report.txt")
-            with open(zip_path, "rb") as zf:
-                st.download_button("📦 Download ZIP", data=zf.read(), file_name="Nest_Export.zip", mime="application/zip")
-
-# -----------------------------------------
-# MODE 3: VIEW REPORTS
-# -----------------------------------------
-elif mode == "📊 View Summary Report":
-    st.header("📊 View Summary Report (Coming Soon)")
-    st.info("This section will let you upload or browse past reports.")
+st.info(
+    "This screen purposefully **removes** 'Quantity Required' for the mode and instead tells you what your pool can yield. "
+    "Optionally set a Target Pieces number to estimate how many bars will be consumed.")
