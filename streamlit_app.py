@@ -1,4 +1,4 @@
-# Steel Nesting Planner v14.0 — Word-style PDF, Logo fixed (JPG/PNG), no charts (18 Aug 2025)
+# Steel Nesting Planner v14.1 — Metadata table full width + PG Bison layout, logo fixed, no charts (18 Aug 2025)
 # Modes: Nest by Required Cuts · Nest from Stock · View Summary Report
 
 import os, io, math, tempfile, base64
@@ -10,16 +10,15 @@ import pandas as pd
 import streamlit as st
 from fpdf import FPDF
 
-# Try Pillow for robust logo handling (JPG/PNG → PNG)
+# Pillow improves logo reliability (JPG/PNG → PNG)
 try:
     from PIL import Image
     _PIL_OK = True
 except Exception:
     _PIL_OK = False
 
-# ── App config ──────────────────────────────────────────────────
-st.set_page_config(page_title="Steel Nesting Planner v14.0", layout="wide")
-st.title("🧰 Steel Nesting Planner v14.0 — PG Bison layout, logo fixed, no charts")
+st.set_page_config(page_title="Steel Nesting Planner v14.1", layout="wide")
+st.title("🧰 Steel Nesting Planner v14.1 — PG Bison layout (full-width meta), logo fixed, no charts")
 
 KERF_DEFAULT_MM = 2.0
 STOCK_DEFAULT_MM = 6000
@@ -123,31 +122,23 @@ def bars_to_text_lines(bars: List[Dict], stock_len_mm: int) -> List[str]:
 
 def normalize_logo(uploaded_file) -> str:
     """
-    Returns a local image path. If Pillow is available, convert to PNG so FPDF is happy.
+    Returns a local image path. If Pillow is available, convert to PNG (better FPDF compatibility).
     Priority: uploaded file -> local 'pg_bison_logo.png' -> ''.
     """
     data = None
-    ext = ".png"
     if uploaded_file is not None:
         data = uploaded_file.read()
-        name = getattr(uploaded_file, "name", "").lower()
-        ext = ".jpg" if (name.endswith(".jpg") or name.endswith(".jpeg")) else ".png"
     elif os.path.exists("pg_bison_logo.png"):
         with open("pg_bison_logo.png","rb") as f: data = f.read()
-        ext = ".png"
     if not data: return ""
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")  # we’ll output PNG
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     if _PIL_OK:
         try:
             with Image.open(io.BytesIO(data)) as im:
-                # convert to RGB for JPEGs with CMYK/alpha etc., then save PNG
-                if im.mode in ("RGBA","P"): im = im.convert("RGB")
-                im.save(tmp.name, format="PNG")
-                return tmp.name
+                if im.mode not in ("RGB", "L"): im = im.convert("RGB")
+                im.save(tmp.name, format="PNG"); return tmp.name
         except Exception:
             pass
-    # Fallback: just write bytes (works if already PNG)
     with open(tmp.name, "wb") as f: f.write(data)
     return tmp.name
 
@@ -213,35 +204,34 @@ def group_by_section(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
 
 # ── PDF helpers (Word layout, no charts) ────────────────────────
 def draw_header(pdf: FPDF, logo_path: str):
-    # Logo left-top; reserve space
     if logo_path and os.path.exists(logo_path):
         try:
             pdf.image(logo_path, x=10, y=10, w=38)
         except Exception:
-            pass  # continue without failing
+            pass
     pdf.set_y(10)
 
 def draw_meta_table(pdf: FPDF, meta: Dict):
-    pdf.set_y(28)  # start under logo
-    left_margin = 10
-    label_w = 55
-    value_w = 115
+    """
+    Full-width table matching the content width (same as pdf.cell(0, ...)).
+    Left column is fixed label width; right column stretches to fill the rest.
+    """
+    pdf.set_y(28)  # under logo
+    page_w = pdf.w - pdf.l_margin - pdf.r_margin  # available content width
+    label_w = 55                                   # keep your label width
+    value_w = page_w - label_w                     # stretch the value column to full width
     row_h = 8
     rows = ["Project","Location","Drawing Number","Revision","Material","Cutting List By","Date Created"]
     for label in rows:
-        pdf.set_x(left_margin)
-        pdf.set_font("Helvetica", "", 11)
-        pdf.cell(label_w, row_h, safe_text(label), border=1)
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(value_w, row_h, safe_text(meta.get(label,"")), border=1, ln=1)
+        pdf.set_x(pdf.l_margin)
+        pdf.set_font("Helvetica", "", 11); pdf.cell(label_w, row_h, safe_text(label), border=1)
+        pdf.set_font("Helvetica", "B", 11); pdf.cell(value_w, row_h, safe_text(meta.get(label,"")), border=1, ln=1)
     pdf.ln(2)
 
 def write_section_block(pdf: FPDF, section: str, stock_len_mm: int, bars: List[Dict]):
-    # Section banner
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, safe_text(f"Section Size   {section}"), border=1, ln=1)
+    pdf.cell(0, 8, safe_text(f"Section Size   {section}"), border=1, ln=1)  # 0 → spans full content width
     pdf.ln(1)
-    # Only textual bar lines (Word doc style)
     pdf.set_font("Helvetica", "", 11)
     for line in bars_to_text_lines(bars, stock_len_mm):
         pdf.cell(0, 6, safe_text(line), ln=1)
@@ -251,13 +241,9 @@ def consolidated_pdf(meta: Dict, logo_path: str, payloads: List[Tuple[str,int,fl
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=10)
     for idx, (section, stock_len_mm, _k, df_section, bars) in enumerate(payloads):
-        pdf.add_page()
-        draw_header(pdf, logo_path)
-        draw_meta_table(pdf, meta)
+        pdf.add_page(); draw_header(pdf, logo_path); draw_meta_table(pdf, meta)
         if idx == 0 and meta.get("Document Note"):
-            pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 5, safe_text(meta["Document Note"]))
-            pdf.ln(1)
+            pdf.set_font("Helvetica", "", 10); pdf.multi_cell(0, 5, safe_text(meta["Document Note"])); pdf.ln(1)
         write_section_block(pdf, section, stock_len_mm, bars)
     return pdf.output(dest="S").encode("latin-1")
 
@@ -265,9 +251,7 @@ def single_section_pdf(meta: Dict, logo_path: str, section: str, stock_len_mm: i
                        df_section: pd.DataFrame, bars: List[Dict]) -> bytes:
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=10)
-    pdf.add_page()
-    draw_header(pdf, logo_path)
-    draw_meta_table(pdf, meta)
+    pdf.add_page(); draw_header(pdf, logo_path); draw_meta_table(pdf, meta)
     write_section_block(pdf, section, stock_len_mm, bars)
     return pdf.output(dest="S").encode("latin-1")
 
@@ -278,7 +262,7 @@ def payloads_by_required(req_df: pd.DataFrame, default_stock_len_mm: int, kerf_m
         s_vals = [clean_int(v, 0) for v in g.get("Stock Length (mm)", [])]
         s_override = next((v for v in s_vals if v and v > 0), 0) if len(s_vals)>0 else 0
         stock_len = s_override if s_override > 0 else default_stock_len_mm
-        pieces = []
+        pieces = []; 
         for _, r in g.iterrows():
             pieces.extend(explode_cuts(clean_int(r["Cut Length (mm)"]), clean_int(r["Quantity"])))
         bars = first_fit_decreasing(pieces, stock_len, kerf_mm)
@@ -286,9 +270,7 @@ def payloads_by_required(req_df: pd.DataFrame, default_stock_len_mm: int, kerf_m
     return payloads
 
 def payloads_from_stock(req_df: pd.DataFrame, stock_df: pd.DataFrame, kerf_mm: float):
-    payloads = []
-    req_groups = group_by_section(req_df)
-
+    payloads = []; req_groups = group_by_section(req_df)
     stock_df = stock_df.copy()
     for c in ["Section Size", "Stock Length (mm)", "Bars Available"]:
         if c not in stock_df.columns: stock_df[c] = 0
@@ -302,7 +284,7 @@ def payloads_from_stock(req_df: pd.DataFrame, stock_df: pd.DataFrame, kerf_mm: f
         stock_by_sec.setdefault(r["Section Size"], []).append((int(r["Stock Length (mm)"]), int(r["Bars Available"])))
 
     for section, g in req_groups.items():
-        pieces = []
+        pieces = []; 
         for _, r in g.iterrows():
             pieces.extend(explode_cuts(clean_int(r["Cut Length (mm)"]), clean_int(r["Quantity"])))
         pieces = sorted([p for p in pieces if p > 0], reverse=True)
@@ -310,8 +292,7 @@ def payloads_from_stock(req_df: pd.DataFrame, stock_df: pd.DataFrame, kerf_mm: f
         inv = stock_by_sec.get(section, [])
         bars: List[Dict] = []
         for length_mm, qty in inv:
-            for _ in range(int(qty)):
-                bars.append({"len": length_mm, "cuts": [], "used": 0.0})
+            for _ in range(int(qty)): bars.append({"len": length_mm, "cuts": [], "used": 0.0})
 
         remaining = pieces.copy()
         for piece in remaining[:]:
@@ -325,15 +306,12 @@ def payloads_from_stock(req_df: pd.DataFrame, stock_df: pd.DataFrame, kerf_mm: f
         if len(remaining) > 0:
             base_len = inv[0][0] if len(inv) > 0 else 6000
             extra = first_fit_decreasing(remaining, base_len, kerf_mm)
-            for b in extra:
-                bars.append({"len": base_len, "cuts": b["cuts"][:], "used": b["used"]})
+            for b in extra: bars.append({"len": base_len, "cuts": b["cuts"][:], "used": b["used"]})
 
         dominant_len = (inv[0][0] if len(inv)>0 else 6000)
         if len(bars) > 0:
-            lengths = [b["len"] for b in bars]
-            dominant_len = int(pd.Series(lengths).mode().iloc[0])
+            lengths = [b["len"] for b in bars]; dominant_len = int(pd.Series(lengths).mode().iloc[0])
 
-        # normalize to dominant length for text (waste calculation already per-bar)
         normalized = []
         for b in bars:
             normalized.append({"cuts": b["cuts"], "used": b["used"], "waste": max(dominant_len - b["used"], 0.0)})
@@ -361,7 +339,6 @@ if run:
         else:
             logo_path = normalize_logo(logo_file)
 
-            # consolidated PDF
             all_pdf = consolidated_pdf(project_meta, logo_path, payloads)
             st.download_button(
                 "⬇️ Download Consolidated PDF",
@@ -371,7 +348,6 @@ if run:
                 use_container_width=True,
             )
 
-            # per-section ZIP if requested
             if offer_zip:
                 files = {}
                 for section, slen, k, g, bars in payloads:
@@ -389,9 +365,8 @@ if run:
                     use_container_width=True,
                 )
 
-        # Minimal on-screen confirmation
         if mode in ("Nest by Required Cuts", "Nest from Stock") and len(payloads) > 0:
-            st.success("PDF built successfully using the Word-style layout (logo at top, no charts).")
+            st.success("PDF built with full-width metadata table and section banner.")
 
     except Exception as e:
         error_box.error(f"Something went wrong: {e}")
