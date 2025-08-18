@@ -1,11 +1,9 @@
-# Steel Nesting Planner v13.7 — PG Bison Header + Section-Based PDF (18 Aug 2025)
+# Steel Nesting Planner v13.8 — Fix PNG error + JPG logos + PG Bison header (18 Aug 2025)
 # Modes: Nest by Required Cuts · Nest from Stock · View Summary Report
-# Key in v13.7:
-# - PG Bison logo header in PDF (upload a logo or place 'pg_bison_logo.png' next to this file)
-# - Metadata table like your Word layout (Project, Location, Drawing No., Revision, Material, Cutting List By, Date Created)
-# - Group by "Section Size" so multiple sections live in one consolidated PDF
-# - Textual "Bar n: |1200|1200|...| scrap: XXX mm" lines + visual bar chart per section
-# - PDF-only export
+# Changes from v13.7:
+# - Plot images are written directly to real .png files (no BytesIO) → fixes “FPDF error: Not a PNG file”
+# - Logo uploader keeps original extension (.png/.jpg/.jpeg) so FPDF reads it correctly
+# - Everything else stays the same: PG Bison header, Word-style metadata, section-based PDF, text “Bar … scrap …” lines + visual bars
 
 import io, os, math, tempfile, base64
 from datetime import datetime
@@ -20,53 +18,35 @@ import matplotlib.pyplot as plt
 # ────────────────────────────────────────────────────────────────
 # App config
 # ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Steel Nesting Planner v13.7", layout="wide")
-st.title("🧰 Steel Nesting Planner v13.7 — PG Bison Header + Section-Based PDF")
+st.set_page_config(page_title="Steel Nesting Planner v13.8", layout="wide")
+st.title("🧰 Steel Nesting Planner v13.8 — PG Bison Header + Section-Based PDF")
 
-# Defaults
 KERF_DEFAULT_MM = 2.0
 STOCK_DEFAULT_MM = 6000
-
-# Optional embedded logo as base64 (leave empty if not embedding)
-DEFAULT_LOGO_B64 = ""  # put a base64 string here if you want a baked-in default
+DEFAULT_LOGO_B64 = ""  # optional embedded default; leave empty if not needed
 
 # ────────────────────────────────────────────────────────────────
-# Sidebar controls
+# Sidebar
 # ────────────────────────────────────────────────────────────────
 st.sidebar.header("⚙️ Settings")
-
-kerf_mm = float(
-    st.sidebar.number_input("Kerf (mm)", min_value=0.0, step=0.5, value=KERF_DEFAULT_MM)
-)
-
-mode = st.sidebar.radio(
-    "Mode",
-    ["Nest by Required Cuts", "Nest from Stock", "View Summary Report"],
-)
+kerf_mm = float(st.sidebar.number_input("Kerf (mm)", min_value=0.0, step=0.5, value=KERF_DEFAULT_MM))
+mode = st.sidebar.radio("Mode", ["Nest by Required Cuts", "Nest from Stock", "View Summary Report"])
 
 stock_choice = st.sidebar.selectbox(
     "Default Stock Length (mm) – used when a row has no 'Stock Length (mm)' value",
-    [6000, 9000, 13000, "Custom"],
-    index=0,
+    [6000, 9000, 13000, "Custom"], index=0,
 )
-if stock_choice == "Custom":
-    default_stock_length_mm = int(
-        st.sidebar.number_input("Custom Stock Length (mm)", min_value=1, step=10, value=STOCK_DEFAULT_MM)
-    )
-else:
-    default_stock_length_mm = int(stock_choice)
+default_stock_length_mm = int(st.sidebar.number_input("Custom Stock Length (mm)", min_value=1, step=10, value=STOCK_DEFAULT_MM)) \
+    if stock_choice == "Custom" else int(stock_choice)
 
 st.sidebar.write("---")
 offer_zip = st.sidebar.checkbox("Also export per-Section PDFs as ZIP", value=False)
 
 # ────────────────────────────────────────────────────────────────
-# Project metadata (Word-style layout)
+# Metadata (Word-style)
 # ────────────────────────────────────────────────────────────────
 st.header("📁 Project Details (PG Bison layout)")
-logo_file = st.file_uploader(
-    "Company Logo (PNG/JPG) — leave empty to use local 'pg_bison_logo.png' or an embedded default",
-    type=["png","jpg","jpeg"]
-)
+logo_file = st.file_uploader("Company Logo (PNG/JPG)", type=["png","jpg","jpeg"])
 
 colA1, colA2 = st.columns(2)
 with colA1:
@@ -114,9 +94,6 @@ def explode_cuts(length_mm: int, qty: int) -> List[int]:
     return [length_mm] * max(qty, 0)
 
 def first_fit_decreasing(cuts_mm: List[int], stock_len_mm: int, kerf_mm: float) -> List[Dict]:
-    """
-    Return bars: [{"cuts":[...], "used":used_mm, "waste":waste_mm}, ...]
-    """
     pieces = sorted([int(c) for c in cuts_mm if c > 0], reverse=True)
     bars: List[Dict] = []
     for piece in pieces:
@@ -125,10 +102,7 @@ def first_fit_decreasing(cuts_mm: List[int], stock_len_mm: int, kerf_mm: float) 
             n = len(bar["cuts"])
             needed = piece + (kerf_mm if n > 0 else 0.0)
             if bar["used"] + needed <= stock_len_mm + 1e-6:
-                bar["cuts"].append(piece)
-                bar["used"] += needed
-                placed = True
-                break
+                bar["cuts"].append(piece); bar["used"] += needed; placed = True; break
         if not placed:
             bars.append({"cuts": [piece], "used": float(piece), "waste": 0.0})
     for bar in bars:
@@ -143,14 +117,16 @@ def bars_to_text_lines(bars: List[Dict], stock_len_mm: int) -> List[str]:
         lines.append(f"Bar {i}: |{cuts_str}| scrap: {int(round(scrap))} mm")
     return lines
 
-def plot_bars_png(bars: List[Dict], stock_len_mm: int, kerf_mm: float) -> bytes:
+def save_bars_plot_png(bars: List[Dict], stock_len_mm: int, kerf_mm: float) -> str:
+    """Save the plot directly to a real .png file and return the file path."""
+    # fallbacks for empty
     if len(bars) == 0:
         fig, ax = plt.subplots(figsize=(8, 1.5))
         ax.axis("off")
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight", dpi=200)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        fig.savefig(tmp.name, format="png", bbox_inches="tight", dpi=200)
         plt.close(fig)
-        return buf.getvalue()
+        return tmp.name
 
     rows = len(bars)
     height = max(2.0, 0.35 * rows + 1.0)
@@ -172,41 +148,46 @@ def plot_bars_png(bars: List[Dict], stock_len_mm: int, kerf_mm: float) -> bytes:
             if j < len(bar["cuts"]) - 1:
                 x += kerf_mm
         waste = max(stock_len_mm - (x), 0.0)
-        ax.text(stock_len_mm - 5, y + 0.22, f"Waste: {int(round(waste))} mm", ha="right", va="center", fontsize=7)
+        ax.text(stock_len_mm - 5, y + 0.22, f"Waste: {int(round(waste))} mm",
+                ha="right", va="center", fontsize=7)
 
     ax.grid(True, axis="x", linestyle=":", linewidth=0.6)
     ax.set_yticks([])
-    buf = io.BytesIO()
     fig.tight_layout()
-    fig.savefig(buf, format="png", dpi=200)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    fig.savefig(tmp.name, format="png", dpi=200)  # ← write real PNG directly
     plt.close(fig)
-    return buf.getvalue()
+    return tmp.name
 
 def decode_logo_to_path(uploaded_file, default_b64: str) -> str:
-    """
-    Priority: uploaded file → local 'pg_bison_logo.png' in app folder → embedded base64 → none.
-    Returns a filesystem path suitable for FPDF.image(...)
-    """
+    """Keep the original extension so FPDF detects type correctly."""
     data = None
+    suffix = ".png"
     if uploaded_file is not None:
         data = uploaded_file.read()
+        name = getattr(uploaded_file, "name", "").lower()
+        if name.endswith(".jpg") or name.endswith(".jpeg"):
+            suffix = ".jpg"
+        else:
+            suffix = ".png"
     elif os.path.exists("pg_bison_logo.png"):
         with open("pg_bison_logo.png", "rb") as f:
             data = f.read()
+        suffix = ".png"
     elif default_b64:
         data = base64.b64decode(default_b64)
+        suffix = ".png"
 
     if not data:
         return ""
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    tmp.write(data)
-    tmp.flush()
-    tmp.close()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.write(data); tmp.flush(); tmp.close()
     return tmp.name
 
 # ────────────────────────────────────────────────────────────────
-# Input tables (Section-based)
+# Input (Section-based)
 # ────────────────────────────────────────────────────────────────
 st.header("✏️ Required Cuts (grouped by Section Size)")
 
@@ -222,17 +203,13 @@ if mode in ("Nest by Required Cuts", "Nest from Stock"):
         }
     )
     req_df = st.data_editor(
-        example_req,
-        key="req_df",
-        num_rows="dynamic",
-        use_container_width=True,
+        example_req, key="req_df", num_rows="dynamic", use_container_width=True,
         column_config={
-            "Section Size": st.column_config.TextColumn(help="e.g., 152x152x23 kg/m"),
+            "Section Size": st.column_config.TextColumn(),
             "Cut Length (mm)": st.column_config.NumberColumn(min_value=1, step=1),
             "Quantity": st.column_config.NumberColumn(min_value=1, step=1),
-            "Stock Length (mm)": st.column_config.NumberColumn(
-                min_value=0, step=10, help="Leave 0/blank to use the default from the sidebar"
-            ),
+            "Stock Length (mm)": st.column_config.NumberColumn(min_value=0, step=10,
+                help="Leave 0/blank to use the default from the sidebar"),
             "Tag (optional)": st.column_config.TextColumn(required=False),
             "Note": st.column_config.TextColumn(required=False),
         },
@@ -240,15 +217,12 @@ if mode in ("Nest by Required Cuts", "Nest from Stock"):
 
 if mode == "Nest from Stock":
     st.header("🏷️ Available Stock (by Section)")
-    st.caption("Add one row per stock length for a Section. **Bars Available** replaces any old 'Quantity Required' fields.")
+    st.caption("Bars Available replaces any old 'Quantity Required' fields.")
     example_stock = pd.DataFrame(
         {"Section Size": ["152x152x23 kg/m", "100x50 RSC Channel"], "Stock Length (mm)": [6000, 6000], "Bars Available": [3, 2]}
     )
     stock_df = st.data_editor(
-        example_stock,
-        key="stock_df",
-        num_rows="dynamic",
-        use_container_width=True,
+        example_stock, key="stock_df", num_rows="dynamic", use_container_width=True,
         column_config={
             "Section Size": st.column_config.TextColumn(),
             "Stock Length (mm)": st.column_config.NumberColumn(min_value=1, step=10),
@@ -264,15 +238,13 @@ else:
 def group_by_section(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     cols = ["Section Size", "Cut Length (mm)", "Quantity", "Stock Length (mm)", "Tag (optional)", "Note"]
     for c in cols:
-        if c not in df.columns:
-            df[c] = np.nan
+        if c not in df.columns: df[c] = np.nan
     df["Section Size"] = df["Section Size"].fillna("").astype(str)
     df["Cut Length (mm)"] = df["Cut Length (mm)"].apply(clean_int)
     df["Quantity"] = df["Quantity"].apply(clean_int)
     df["Stock Length (mm)"] = df["Stock Length (mm)"].apply(lambda v: clean_int(v, 0))
     df["Tag (optional)"] = df["Tag (optional)"].fillna("").astype(str)
     df["Note"] = df["Note"].fillna("").astype(str)
-
     df = df[(df["Section Size"] != "") & (df["Cut Length (mm)"] > 0) & (df["Quantity"] > 0)].copy()
     groups = {}
     for sec, g in df.groupby("Section Size", dropna=False):
@@ -280,23 +252,17 @@ def group_by_section(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     return groups
 
 # ────────────────────────────────────────────────────────────────
-# PDF helpers (header + metadata + section blocks)
+# PDF helpers
 # ────────────────────────────────────────────────────────────────
 def draw_header_with_logo(pdf: FPDF, logo_path: str):
-    # Logo
     if logo_path and os.path.exists(logo_path):
         pdf.image(logo_path, x=10, y=10, w=38)
-    # Start content below the logo
     pdf.set_y(30)
 
 def draw_meta_table(pdf: FPDF, meta: Dict):
     pdf.set_y(30)
     pdf.set_font("Helvetica", "", 11)
-    left_margin = 10
-    col_label_w = 55
-    col_value_w = 115
-    row_h = 7
-
+    left_margin = 10; col_label_w = 55; col_value_w = 115; row_h = 7
     rows = [
         ("Project", meta.get("Project","")),
         ("Location", meta.get("Location","")),
@@ -306,29 +272,23 @@ def draw_meta_table(pdf: FPDF, meta: Dict):
         ("Cutting List By", meta.get("Cutting List By","")),
         ("Date Created", meta.get("Date Created","")),
     ]
-
     for label, value in rows:
         pdf.set_x(left_margin)
-        pdf.set_font("Helvetica", "", 11)
-        pdf.cell(col_label_w, row_h, label, border=1)
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(col_value_w, row_h, str(value), border=1, ln=1)
+        pdf.set_font("Helvetica", "", 11); pdf.cell(col_label_w, row_h, label, border=1)
+        pdf.set_font("Helvetica", "B", 11); pdf.cell(col_value_w, row_h, str(value), border=1, ln=1)
     pdf.ln(2)
 
-def write_section_block(pdf: FPDF, section: str, stock_len_mm: int, kerf_mm: float, df_section: pd.DataFrame, bars: List[Dict]):
-    # Section header
+def write_section_block(pdf: FPDF, section: str, stock_len_mm: int, kerf_mm: float,
+                        df_section: pd.DataFrame, bars: List[Dict]):
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 7, f"Section Size   {section}", ln=1, border=1)
     pdf.ln(1)
 
-    # Bar text lines
-    lines = bars_to_text_lines(bars, stock_len_mm)
     pdf.set_font("Helvetica", "", 11)
-    for line in lines:
+    for line in bars_to_text_lines(bars, stock_len_mm):
         pdf.cell(0, 6, line, ln=1)
     pdf.ln(1)
 
-    # Cuts table
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(45, 7, "Cut Length (mm)", border=1)
     pdf.cell(25, 7, "Qty", border=1)
@@ -344,20 +304,17 @@ def write_section_block(pdf: FPDF, section: str, stock_len_mm: int, kerf_mm: flo
         pdf.cell(80, 7, str(r.get('Note',''))[:45], border=1, ln=1)
     pdf.ln(1)
 
-    # Visual bar chart
-    img_bytes = plot_bars_png(bars, stock_len_mm, kerf_mm)
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-        tmp.write(img_bytes)
-        tmp_path = tmp.name
+    # Save real PNG file and embed
+    img_path = save_bars_plot_png(bars, stock_len_mm, kerf_mm)
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(0, 6, "Cut Layout Visualization:", ln=1)
-    pdf.image(tmp_path, w=190)
+    pdf.image(img_path, w=190)
     pdf.ln(4)
 
-def consolidated_pdf(meta: Dict, logo_path: str, payloads: List[Tuple[str, int, float, pd.DataFrame, List[Dict]]]) -> bytes:
+def consolidated_pdf(meta: Dict, logo_path: str,
+                     payloads: List[Tuple[str, int, float, pd.DataFrame, List[Dict]]]) -> bytes:
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=10)
-
     for idx, (section, stock_len_mm, kerf_mm, df_section, bars) in enumerate(payloads):
         pdf.add_page()
         draw_header_with_logo(pdf, logo_path)
@@ -367,7 +324,6 @@ def consolidated_pdf(meta: Dict, logo_path: str, payloads: List[Tuple[str, int, 
             pdf.multi_cell(0, 5, meta["Document Note"])
             pdf.ln(1)
         write_section_block(pdf, section, stock_len_mm, kerf_mm, df_section, bars)
-
     return pdf.output(dest="S").encode("latin-1")
 
 def single_section_pdf(meta: Dict, logo_path: str, section: str, stock_len_mm: int, kerf_mm: float,
@@ -381,17 +337,14 @@ def single_section_pdf(meta: Dict, logo_path: str, section: str, stock_len_mm: i
     return pdf.output(dest="S").encode("latin-1")
 
 # ────────────────────────────────────────────────────────────────
-# Build payloads
+# Payload builders
 # ────────────────────────────────────────────────────────────────
 def payloads_by_required(req_df: pd.DataFrame, default_stock_len_mm: int, kerf_mm: float):
-    payloads = []
-    groups = group_by_section(req_df)
+    payloads = []; groups = group_by_section(req_df)
     for section, g in groups.items():
-        # find first nonzero per-row override if present
         s_vals = [clean_int(v, 0) for v in g.get("Stock Length (mm)", [])]
         s_override = next((v for v in s_vals if v and v > 0), 0) if len(s_vals)>0 else 0
         stock_len = s_override if s_override > 0 else default_stock_len_mm
-
         pieces = []
         for _, r in g.iterrows():
             pieces.extend(explode_cuts(clean_int(r["Cut Length (mm)"]), clean_int(r["Quantity"])))
@@ -400,13 +353,10 @@ def payloads_by_required(req_df: pd.DataFrame, default_stock_len_mm: int, kerf_m
     return payloads
 
 def payloads_from_stock(req_df: pd.DataFrame, stock_df: pd.DataFrame, kerf_mm: float):
-    payloads = []
-    req_groups = group_by_section(req_df)
-
+    payloads = []; req_groups = group_by_section(req_df)
     stock_df = stock_df.copy()
     for c in ["Section Size", "Stock Length (mm)", "Bars Available"]:
-        if c not in stock_df.columns:
-            stock_df[c] = 0
+        if c not in stock_df.columns: stock_df[c] = 0
     stock_df["Section Size"] = stock_df["Section Size"].fillna("").astype(str)
     stock_df["Stock Length (mm)"] = stock_df["Stock Length (mm)"].apply(clean_int)
     stock_df["Bars Available"] = stock_df["Bars Available"].apply(clean_int)
@@ -435,12 +385,8 @@ def payloads_from_stock(req_df: pd.DataFrame, stock_df: pd.DataFrame, kerf_mm: f
             for bar in bars:
                 needed = piece + (kerf_mm if len(bar["cuts"]) > 0 else 0.0)
                 if bar["used"] + needed <= bar["len"] + 1e-6:
-                    bar["cuts"].append(piece)
-                    bar["used"] += needed
-                    placed = True
-                    break
-            if placed:
-                remaining.remove(piece)
+                    bar["cuts"].append(piece); bar["used"] += needed; placed = True; break
+            if placed: remaining.remove(piece)
 
         if len(remaining) > 0:
             base_len = inv[0][0] if len(inv) > 0 else 6000
@@ -448,25 +394,21 @@ def payloads_from_stock(req_df: pd.DataFrame, stock_df: pd.DataFrame, kerf_mm: f
             for b in extra:
                 bars.append({"len": base_len, "cuts": b["cuts"][:], "used": b["used"]})
 
-        # Choose dominant length to plot
         if len(bars) == 0:
             dominant_len = (inv[0][0] if len(inv) else 6000)
         else:
             lengths = [b["len"] for b in bars]
             dominant_len = int(pd.Series(lengths).mode().iloc[0])
 
-        # Normalize bars to dominant axis for plotting
         normalized = []
         for b in bars:
             used = b["used"] if b["len"] == dominant_len else b["used"] * (dominant_len / max(b["len"], 1))
             normalized.append({"cuts": b["cuts"], "used": used, "waste": max(dominant_len - used, 0.0)})
-
         payloads.append((section, dominant_len, kerf_mm, g, normalized))
-
     return payloads
 
 # ────────────────────────────────────────────────────────────────
-# Compute & Export
+# Run
 # ────────────────────────────────────────────────────────────────
 st.write("---")
 col_run, col_sp = st.columns([1, 3])
@@ -488,7 +430,6 @@ if run:
         else:
             logo_path = decode_logo_to_path(logo_file, DEFAULT_LOGO_B64)
 
-            # consolidated PDF
             all_pdf = consolidated_pdf(project_meta, logo_path, payloads)
             st.download_button(
                 "⬇️ Download Consolidated PDF",
@@ -498,7 +439,6 @@ if run:
                 use_container_width=True,
             )
 
-            # optional per-section ZIP
             if offer_zip:
                 files = {}
                 for section, slen, k, g, bars in payloads:
@@ -518,7 +458,7 @@ if run:
                     use_container_width=True,
                 )
 
-        # quick on-screen summary
+        # On-screen summary
         if mode in ("Nest by Required Cuts", "Nest from Stock") and len(payloads) > 0:
             st.write("---")
             st.subheader("📊 Quick On-Screen Summary (per Section)")
@@ -527,23 +467,21 @@ if run:
                 total_cuts = int(g["Quantity"].sum())
                 total_cut_len_mm = float((g["Cut Length (mm)"] * g["Quantity"]).sum())
                 meters_ordered = len(bars) * (slen / 1000.0)
-                rows.append(
-                    {
-                        "Section": section,
-                        "Bars Used": len(bars),
-                        "Stock Len (mm)": slen,
-                        "Total Cuts": total_cuts,
-                        "Total Cut Len (mm)": int(round(total_cut_len_mm)),
-                        "Meters Ordered": round(meters_ordered, 3),
-                    }
-                )
+                rows.append({
+                    "Section": section,
+                    "Bars Used": len(bars),
+                    "Stock Len (mm)": slen,
+                    "Total Cuts": total_cuts,
+                    "Total Cut Len (mm)": int(round(total_cut_len_mm)),
+                    "Meters Ordered": round(meters_ordered, 3),
+                })
             st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
     except Exception as e:
         error_box.error(f"Something went wrong: {e}")
 
 # ────────────────────────────────────────────────────────────────
-# View-only summary
+# View Summary Report
 # ────────────────────────────────────────────────────────────────
 if mode == "View Summary Report":
     st.info("Switch to one of the nesting modes and click **Run Nesting & Build PDF** to generate outputs.")
